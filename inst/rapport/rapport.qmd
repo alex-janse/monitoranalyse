@@ -1,0 +1,1774 @@
+---
+title: "`r params$project_naam`"
+format:
+  html:
+    toc: true
+    toc-depth: 2
+    toc-title: "Inhoud"
+    embed-resources: true
+    theme:
+      - flatly
+      - assets/lkca-theme.scss
+    include-in-header: js/copy-figuur-knop.html
+params:
+  project_naam:   "LKCA Monitor"
+  analyse_object: "05_output/datapackage_<ts>/analyse_object.rds"
+  audit_log:      "05_output/datapackage_<ts>/audit_log.rds"
+  pct_decimalen:  0
+  stat_decimalen: 1
+  resp_id_col:    "ID"
+  logo_bestand:   ""
+execute:
+  echo: false
+  warning: false
+  message: false
+knitr:
+  opts_chunk:
+    fig.width:  7
+    fig.height: 4
+    dpi:        96
+---
+
+```{r setup}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+# ggpattern vereist Cairo; bij ontbreken tonen kleine-N staven effen i.p.v. gestreept
+has_ggpattern <- requireNamespace("ggpattern", quietly = TRUE)
+if (has_ggpattern) library(ggpattern)
+library(DT)
+library(stringr)
+library(purrr)
+library(jsonlite)
+library(forcats)
+
+# Analyseobject en audit_log laden
+obj       <- readRDS(params$analyse_object)
+audit_log <- readRDS(params$audit_log)
+
+# Afrondingsparameters uit params (komen uit config.R via run_project.R)
+pct_dec  <- params$pct_decimalen
+stat_dec <- params$stat_decimalen
+
+# Datavesheid: is het .sav nieuwer dan het analyseobject?
+sav_nieuwer <- tryCatch({
+  sav_mtime    <- obj$meta$sav_mtime
+  object_mtime <- file.info(params$analyse_object)$mtime
+  !is.na(sav_mtime) && !is.na(object_mtime) && sav_mtime > object_mtime
+}, error = function(e) FALSE)
+
+# Statussen
+n_fouten  <- sum(audit_log$status == "FOUT")
+n_waarsch <- sum(audit_log$status == "WAARSCHUWING")
+heeft_fout <- n_fouten > 0
+
+# Helper: getal formatteren — afrondingsconventie staat vast in R/afronding.R
+# van het package monitoranalyse (niet hier wijzigen; zie toelichting daar)
+rond_af        <- monitoranalyse::rond_af
+formatteer_pct <- monitoranalyse::formatteer_pct
+fmt_pct  <- function(x) formatteer_pct(x, pct_dec)
+fmt_stat <- function(x) rond_af(x, stat_dec)
+
+# Voorkomt dat vrije-tekst/metadata die toevallig begint met een
+# markdown-opmaakteken (+, -, *, #) als ruwe HTML door pandoc verkeerd
+# geparsed wordt (kan de div-sluiting van de hele pagina laten ontsporen).
+md_veilig <- function(x) {
+  x <- as.character(x)
+  # CommonMark staat tot enkele spaties/tabs vóór een lijst-/kopmarkering toe,
+  # dus alleen het allereerste teken checken is niet genoeg.
+  x <- sub("^([ \t]*)\\+", "\\1&#43;", x)
+  x <- sub("^([ \t]*)-",   "\\1&#45;", x)
+  x <- sub("^([ \t]*)\\*", "\\1&#42;", x)
+  x <- sub("^([ \t]*)#",   "\\1&#35;", x)
+  x
+}
+
+# Zelfde bescherming, maar dan voor elke tekstkolom (en kolomnaam) van een
+# data.frame/tibble die via knitr::kable() als ruwe HTML wordt uitgevoerd.
+# Doet zelf de HTML-escaping (i.p.v. kable's escape=TRUE), zodat de eigen
+# &#..;-vervangingen niet dubbel worden ge-escaped (anders verschijnt de
+# entity letterlijk i.p.v. het teken). Gebruik daarom altijd escape = FALSE
+# bij de bijbehorende knitr::kable()-aanroep.
+md_veilig_tabel <- function(df) {
+  df <- as.data.frame(df, stringsAsFactors = FALSE)
+  df[] <- lapply(df, function(kol) {
+    if (is.character(kol)) md_veilig(htmltools::htmlEscape(kol)) else kol
+  })
+  names(df) <- md_veilig(htmltools::htmlEscape(names(df)))
+  df
+}
+
+# DT-opties gedeeld
+dt_opties <- list(
+  dom      = "Bfrtip",
+  buttons  = list("copy"),
+  paging   = FALSE,
+  searching = FALSE,
+  language = list(
+    buttons = list(copy = "Kopieer tabel")
+  )
+)
+
+# =========================================================================
+# Speciale-categorie classificatie & sortering
+# =========================================================================
+
+#' Classificeer antwoordcategorieën als normaal of speciaal
+classify_speciaal <- function(x) {
+  dplyr::case_when(
+    stringr::str_detect(x, stringr::regex("^(open:\\s*)?ander", ignore_case = TRUE)) ~ "anders_namelijk",
+    stringr::str_detect(x, stringr::regex("(\\bnee\\b|geen)", ignore_case = TRUE)) ~ "nee_geen",
+    stringr::str_detect(x, stringr::regex("weet.*niet", ignore_case = TRUE)) ~ "weet_niet",
+    stringr::str_detect(x, stringr::regex("wil.*niet.*zeggen|wil.*liever.*niet", ignore_case = TRUE)) ~ "wil_niet_zeggen",
+    stringr::str_detect(x, stringr::regex("niet van toepassing|n\\.v\\.t\\.", ignore_case = TRUE)) ~ "niet_toepassing",
+    .default = "normaal"
+  )
+}
+
+# Vaste volgorde van speciale categorieën
+speciaal_volgorde <- c(
+  "anders_namelijk" = 1,
+  "nee_geen"        = 2,
+  "weet_niet"       = 3,
+  "wil_niet_zeggen" = 4,
+  "niet_toepassing" = 5
+)
+
+#' Sorteer de frequentiedata van één cluster op basis van sorteer_modus
+#'
+#' Bij "freq": normale categorieën op %Ja aflopend, speciaal onderin.
+#' Bij "orig": normale categorieën op originele code, speciaal onderin.
+#'
+#' @param freq_cl Tibble met frequentiedata van één cluster
+#' @param mode   "freq" of "orig"
+#' @return Gesorteerde freq_cl
+sorteer_cluster <- function(freq_cl, mode = c("freq", "orig")) {
+  mode <- match.arg(mode)
+
+  if (nrow(freq_cl) == 0) return(freq_cl)
+
+  freq_cl <- freq_cl |>
+    mutate(
+      # Display-categorie: voor Ja/Nee-rijen is dat het variabelelabel,
+      # voor andere rijen het antwoordlabel zelf
+      display_cat = dplyr::if_else(
+        stringr::str_to_lower(stringr::str_trim(antwoord_label)) %in% c("ja", "nee"),
+        label,
+        antwoord_label
+      ),
+      special = classify_speciaal(display_cat)
+    )
+
+  # Per display-categorie: sort key bepalen
+  cat_keys <- freq_cl |>
+    dplyr::group_by(display_cat, special) |>
+    dplyr::summarise(
+      # %Ja (voor Ja/Nee) of maximale pct (voor andere)
+      sort_pct = dplyr::if_else(
+        any(stringr::str_to_lower(stringr::str_trim(antwoord_label)) == "ja"),
+        pct[stringr::str_to_lower(stringr::str_trim(antwoord_label)) == "ja"][1],
+        max(pct)
+      ),
+      sort_code = min(code),
+      .groups = "drop"
+    ) |>
+    dplyr::mutate(
+      special_num = speciaal_volgorde[special],
+      special_num = dplyr::if_else(is.na(special_num), 0, special_num)
+    ) |>
+    dplyr::mutate(
+      sort_key = dplyr::if_else(
+        special == "normaal",
+        if (mode == "freq") -sort_pct else sort_code,
+        special_num
+      )
+    ) |>
+    dplyr::arrange(sort_key)
+
+  # Toepassen op freq_cl: rijen sorteren per display_cat,
+  # binnen display_cat op originele code
+  freq_cl |>
+    dplyr::mutate(
+      display_cat = factor(display_cat, levels = cat_keys$display_cat)
+    ) |>
+    dplyr::arrange(display_cat, code)
+}
+```
+
+```{=html}
+<style>
+/* Tab-navigatie */
+.nav-tabs .nav-link {
+  font-weight: 500;
+}
+
+.nav-tabs .nav-link.active {
+  font-weight: 700;
+}
+
+/* Wisselknoppen rechte tellingen */
+.wissel-knoppen {
+  margin: 12px 0 18px 0;
+}
+
+.wissel-knoppen button {
+  padding: 6px 18px;
+  margin-right: 6px;
+  border: 1px solid #aaa;
+  border-radius: 4px;
+  background: #f8f8f8;
+  cursor: pointer;
+  font-size: 0.9em;
+}
+
+.wissel-knoppen button.actief {
+  background: #5C2482;
+  color: #fff;
+  border-color: #481d68;
+}
+
+/* Cluster-secties */
+.cluster-sectie {
+  margin-bottom: 36px;
+}
+
+.cluster-vraag {
+  margin-bottom: 8px;
+  font-size: 0.93em;
+}
+
+.cluster-n {
+  font-weight: normal;
+  color: #888;
+}
+
+/* DT-tabel kolomkoppen */
+.dataTable thead th {
+  color: #5C2482;
+  font-weight: bold;
+}
+
+/* Kopieer-alle-knop */
+.kopieer-alle-knop {
+  margin: 0 0 16px 0;
+  padding: 7px 18px;
+  background: #5C2482;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.88em;
+}
+
+.kopieer-alle-knop:hover {
+  background: #481d68;
+}
+
+/* Algemene validatie-banners */
+.banner-fout {
+  background: #fde8e8;
+  border-left: 5px solid #c0392b;
+  padding: 14px 18px;
+  margin-bottom: 18px;
+  border-radius: 3px;
+}
+
+.banner-ok {
+  background: #e8f5e9;
+  border-left: 5px solid #27ae60;
+  padding: 14px 18px;
+  margin-bottom: 18px;
+  border-radius: 3px;
+}
+
+.banner-waarsch {
+  background: #fff3e0;
+  border-left: 5px solid #e67e22;
+  padding: 14px 18px;
+  margin-bottom: 18px;
+  border-radius: 3px;
+}
+
+.banner-info {
+  background: #eaf4fb;
+  border-left: 5px solid #2980b9;
+  padding: 14px 18px;
+  margin-bottom: 18px;
+  border-radius: 3px;
+}
+
+/* Validatielog overzicht */
+.validatie-overzicht {
+  margin-top: 10px;
+}
+
+.validatie-blok {
+  padding: 12px 16px;
+  margin: 12px 0;
+  border-radius: 4px;
+}
+
+.validatie-ok {
+  background: #e8f5e9;
+  border-left: 5px solid #27ae60;
+}
+
+.validatie-waarschuwing {
+  background: #fff3e0;
+  border-left: 5px solid #e67e22;
+}
+
+.validatie-fout {
+  background: #fde8e8;
+  border-left: 5px solid #c0392b;
+}
+
+.validatie-status {
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.validatie-blok p {
+  margin-bottom: 8px;
+}
+
+.validatie-blok ul {
+  margin-bottom: 0;
+  padding-left: 22px;
+}
+
+.validatie-blok li {
+  margin-bottom: 4px;
+}
+
+/* Mini-TOC */
+.mini-toc {
+  columns: 2;
+  margin-bottom: 18px;
+  font-size: 0.88em;
+}
+
+.mini-toc a {
+  display: block;
+  padding: 1px 0;
+  color: #5C2482;
+}
+
+.mini-toc-kv {
+  font-weight: 600;
+  margin: 8px 0 2px 0;
+  color: #333;
+}
+
+/* Gekruiste figuren: subgroep-overzicht */
+.gkf-subgroepen {
+  font-size: 0.9em;
+  color: #666;
+  margin-bottom: 18px;
+}
+
+/* Kruisvariabele-descriptives tabel */
+.kv-desc-tabel {
+  font-size: 0.9em;
+  margin-bottom: 16px;
+}
+.kv-desc-tabel th {
+  background: #f5f5f5;
+}
+</style>
+```
+
+::: {.panel-tabset}
+
+## Overzicht
+
+```{r overzicht-banner}
+#| results: asis
+
+if (sav_nieuwer) {
+  cat('<div class="banner-waarsch">',
+      '⚠️ <strong>Let op:</strong> het bronbestand (.sav) is aangepast ',
+      '<em>na</em> de laatste analyse. Draai <code>04_run_project.R</code> ',
+      'opnieuw om de resultaten bij te werken.',
+      '</div>')
+}
+
+if (heeft_fout) {
+  cat('<div class="banner-fout">',
+      '⚠️ <strong>', n_fouten, ' kritieke fout(en) gevonden.</strong> ',
+      'De resultaten-tabbladen zijn niet beschikbaar totdat de fouten zijn opgelost. ',
+      'Zie de validatielog hieronder.',
+      '</div>')
+} else if (n_waarsch > 0) {
+  cat('<div class="banner-waarsch">',
+      '⚠️ <strong>', n_waarsch, ' waarschuwing(en).</strong> ',
+      'Controleer de validatielog hieronder vóór gebruik.',
+      '</div>')
+} else {
+  cat('<div class="banner-ok">',
+      '✓ <strong>Alle validatiechecks geslaagd</strong> (',
+      obj$meta$n_totaal, ' respondenten, ',
+      obj$meta$n_clusters, ' clusters).',
+      '</div>')
+}
+```
+
+### Projectinformatie
+
+```{r projectinfo}
+#| results: asis
+cat(
+  '<table style="border-collapse:collapse;font-size:0.93em;">',
+  '<tr><td style="padding:3px 16px 3px 0;color:#555;">Project</td>',
+  '<td><strong>', params$project_naam, '</strong></td></tr>',
+  '<tr><td style="padding:3px 16px 3px 0;color:#555;">N respondenten</td>',
+  '<td>', obj$meta$n_totaal, '</td></tr>',
+  '<tr><td style="padding:3px 16px 3px 0;color:#555;">Bronbestand</td>',
+  '<td><code>', obj$meta$input_sav, '</code></td></tr>',
+  '<tr><td style="padding:3px 16px 3px 0;color:#555;">Bestandsdatum</td>',
+  '<td>', format(obj$meta$sav_mtime, "%d-%m-%Y %H:%M"), '</td></tr>',
+  '<tr><td style="padding:3px 16px 3px 0;color:#555;">Metadata</td>',
+  '<td><code>', obj$meta$metadata_file, '</code></td></tr>',
+  '<tr><td style="padding:3px 16px 3px 0;color:#555;">Aangemaakt op</td>',
+  '<td>', format(obj$meta$aangemaakt_op, "%d-%m-%Y %H:%M"), '</td></tr>',
+  '</table>'
+)
+```
+
+### Datadekking
+
+```{r datadekking}
+#| results: asis
+
+# Clusters zonder respons
+cls_met_data <- c(
+  obj$frequenties |> filter(n > 0) |> pull(cluster_id),
+  obj$descriptives |> filter(n_valid > 0) |> pull(cluster_id)
+) |> unique()
+
+cls_zonder <- setdiff(obj$meta$clusters_volgorde, cls_met_data)
+
+if (length(cls_zonder) > 0) {
+  cat(
+    '<p>De volgende clusters zijn niet opgenomen omdat ze geen antwoorden bevatten:</p>\n',
+    '<ul>\n',
+    paste0('<li><strong>', cls_zonder, '</strong></li>', collapse = "\n"),
+    '\n</ul>\n'
+  )
+} else {
+  cat('<p>Alle clusters bevatten data.</p>')
+}
+```
+
+### Validatielog
+
+```{r validatielog}
+maak_validatie_label <- function(df) {
+  if (!all(c("domein", "controle") %in% names(df))) {
+    return(df$controle %||% "Controle uitgevoerd")
+  }
+
+  paste0(df$domein, " — ", df$controle)
+}
+
+log_ok <- audit_log |>
+  filter(status == "INFO")
+
+log_waarschuwing <- audit_log |>
+  filter(status == "WAARSCHUWING")
+
+log_fout <- audit_log |>
+  filter(status == "FOUT")
+
+ok_labels <- if (nrow(log_ok) > 0) {
+  unique(maak_validatie_label(log_ok))
+} else {
+  c(
+    "Metadata-schema gecontroleerd",
+    "Variabelen in metadata gekoppeld aan databestand",
+    "Clusters gecontroleerd",
+    "Inputvalidatie uitgevoerd"
+  )
+}
+
+validatie_blokken <- list()
+
+# Rood: fouten eerst
+if (nrow(log_fout) > 0) {
+  validatie_blokken <- append(
+    validatie_blokken,
+    list(
+      htmltools::tags$div(
+        class = "validatie-blok validatie-fout",
+        htmltools::tags$div(
+          class = "validatie-status",
+          paste0("✖ Fouten — ", nrow(log_fout), " melding(en)")
+        ),
+        htmltools::tags$p(
+          "Los deze fouten op voordat het rapport voor inhoudelijke rapportage wordt gebruikt."
+        ),
+        htmltools::tags$ul(
+          lapply(seq_len(nrow(log_fout)), function(i) {
+            rij <- log_fout[i, ]
+
+            htmltools::tags$li(
+              htmltools::tags$strong(
+                paste0(rij$domein, " — ", rij$controle)
+              ),
+              htmltools::tags$br(),
+              rij$detail
+            )
+          })
+        )
+      )
+    )
+  )
+}
+
+# Geel: waarschuwingen daarna
+if (nrow(log_waarschuwing) > 0) {
+  validatie_blokken <- append(
+    validatie_blokken,
+    list(
+      htmltools::tags$div(
+        class = "validatie-blok validatie-waarschuwing",
+        htmltools::tags$div(
+          class = "validatie-status",
+          paste0("⚠ Waarschuwingen — ", nrow(log_waarschuwing), " melding(en)")
+        ),
+        htmltools::tags$ul(
+          lapply(seq_len(nrow(log_waarschuwing)), function(i) {
+            rij <- log_waarschuwing[i, ]
+
+            htmltools::tags$li(
+              htmltools::tags$strong(
+                paste0(rij$domein, " — ", rij$controle)
+              ),
+              htmltools::tags$br(),
+              rij$detail
+            )
+          })
+        )
+      )
+    )
+  )
+}
+
+# Groen: OK-controles als laatste
+validatie_blokken <- append(
+  validatie_blokken,
+  list(
+    htmltools::tags$div(
+      class = "validatie-blok validatie-ok",
+      htmltools::tags$div(
+        class = "validatie-status",
+        "✓ OK — automatische controles uitgevoerd"
+      ),
+      htmltools::tags$p(
+        "Binnen onderstaande controles zijn geen fouten of waarschuwingen gevonden:"
+      ),
+      htmltools::tags$ul(
+        lapply(ok_labels, function(x) {
+          htmltools::tags$li(
+            htmltools::tags$span("✓ "),
+            x
+          )
+        })
+      )
+    )
+  )
+)
+
+htmltools::tags$div(
+  class = "validatie-overzicht",
+  validatie_blokken
+)
+```
+
+### Gebruikershandleiding
+
+**Wat is dit rapport?**
+Dit rapport is automatisch gegenereerd vanuit het opgeschoonde databestand en de bijbehorende metadata. De getallen zijn berekend door R en zijn niet handmatig bewerkt.
+
+**Navigeren**
+
+- Gebruik de tabbladen bovenaan om te wisselen tussen *Overzicht*, *Rechte tellingen*, *Kruisingen* en *Open antwoorden*.
+- Binnen *Rechte tellingen* en *Kruisingen* kun je wisselen tussen tabellen en figuren via de knoppen bovenaan.
+- De inhoudsopgave (links) navigeert naar individuele vragen.
+
+**Tabellen kopiëren**
+
+- *Per tabel:* klik op de knop **Kopieer tabel** boven de tabel. De inhoud wordt als tab-gescheiden tekst naar het klembord gekopieerd en kan worden geplakt in Word of Excel.
+- *Alle tabellen tegelijk:* klik op de knop **Kopieer alle tabellen** bovenaan het tabblad. Elke vraag begint op een nieuwe regel met de vraagtekst als kop.
+
+**Figuren kopiëren**
+
+Klik op de knop **📋 Kopieer afbeelding** onder de figuur om de afbeelding naar het klembord te kopiëren. Klik op **📋 Kopieer tabel** om de onderliggende data als tab-gescheiden tekst te kopiëren (plakbaar in Word of Excel).
+
+- **Aanbevolen browser: Chrome of Edge.** De kopieerknoppen werken optimaal in Chrome en Edge.
+- In Firefox bij lokale bestanden wordt de figuur als alternatief gedownload als PNG-bestand.
+
+**Rode fout in de validatielog?**
+
+Neem contact op met de data-analist. Gebruik het rapport niet voor rapportage totdat de fouten zijn opgelost.
+
+---
+
+## Rechte tellingen
+
+```{r rt-check}
+#| results: asis
+if (heeft_fout) {
+  cat('<div class="banner-fout">',
+      '⚠️ <strong>Tabblad niet beschikbaar wegens validatiefouten.</strong> ',
+      'Los eerst de fouten op de Overzicht-pagina op.',
+      '</div>')
+  knitr::knit_exit()
+}
+```
+
+```{=html}
+<!-- Top-level toggle: Tabellen / Figuren -->
+<div class="wissel-knoppen" id="rt-top-knoppen">
+  <button id="rt-btn-tabellen" class="actief" onclick="rtWisselWeergave('tabellen')">Tabellen</button>
+  <button id="rt-btn-figuren" onclick="rtWisselWeergave('figuren')">Figuren</button>
+</div>
+
+<!-- Second-level toggle: Frequentie / Origineel -->
+<div class="wissel-knoppen" id="rt-sort-knoppen">
+  <button id="rt-btn-freq" class="actief" onclick="rtWisselSortering('freq')">
+    Gesorteerd op frequentie
+  </button>
+  <button id="rt-btn-orig" onclick="rtWisselSortering('orig')">
+    Originele sortering
+  </button>
+</div>
+
+<script>
+var rtHuidigeWeergave = 'tabellen';
+var rtHuidigeSortering = 'freq';
+
+function rtToonActieveDiv() {
+  var actiefId = 'rt-' + rtHuidigeWeergave + '-' + rtHuidigeSortering;
+  ['rt-tabellen-freq', 'rt-tabellen-orig', 'rt-figuren-freq', 'rt-figuren-orig'].forEach(function(id) {
+    var el = document.getElementById(id);
+    if (el) el.style.display = id === actiefId ? 'block' : 'none';
+  });
+}
+
+function rtWisselWeergave(weergave) {
+  rtHuidigeWeergave = weergave;
+  document.getElementById('rt-btn-tabellen').classList.toggle('actief', weergave === 'tabellen');
+  document.getElementById('rt-btn-figuren').classList.toggle('actief', weergave === 'figuren');
+  rtToonActieveDiv();
+}
+
+function rtWisselSortering(mode) {
+  rtHuidigeSortering = mode;
+  document.getElementById('rt-btn-freq').classList.toggle('actief', mode === 'freq');
+  document.getElementById('rt-btn-orig').classList.toggle('actief', mode === 'orig');
+  rtToonActieveDiv();
+}
+
+// Bij de EERSTE klik op de Rechte tellingen-tab:
+// - Alle inner-divs zijn nog zichtbaar (window.load heeft ze nog niet verborgen)
+// - Bootstrap-tab is net zichtbaar geworden
+// → adjust alle DT-kolommen terwijl alles zichtbaar is
+// → daarna pas het actieve panel instellen en de rest verbergen
+var rtInitialized = false;
+document.querySelector('[data-bs-target="#tabset-1-2"]')
+  .addEventListener('shown.bs.tab', function() {
+    if (!rtInitialized) {
+      rtInitialized = true;
+      requestAnimationFrame(function() {
+        jQuery('#tabset-1-2 table.dataTable').each(function() {
+          jQuery(this).DataTable().columns.adjust();
+        });
+        rtToonActieveDiv();
+      });
+    }
+  });
+
+// Kopieer-alle-tabellen (gedeeld voor beide sorteerdivs)
+function kopieerAlleTabellen(containerId) {
+  var container = document.getElementById(containerId);
+  var secties   = container.querySelectorAll(".cluster-sectie");
+  var regels    = [];
+
+  secties.forEach(function(sec) {
+    var kop = sec.querySelector(".cluster-vraag");
+    if (kop) {
+      regels.push(kop.textContent.trim());
+      regels.push("");
+    }
+    sec.querySelectorAll("table tr").forEach(function(rij) {
+      var cellen = Array.from(rij.querySelectorAll("th, td"))
+                        .map(function(c) { return c.textContent.trim(); });
+      regels.push(cellen.join("\t"));
+    });
+    regels.push("");
+  });
+
+  navigator.clipboard.writeText(regels.join("\n"))
+    .then(function() {
+      var btn = container.querySelector(".kopieer-alle-knop");
+      btn.textContent = "✓ Alle tabellen gekopieerd";
+      setTimeout(function() {
+        btn.textContent = "Kopieer alle tabellen";
+      }, 2500);
+    })
+    .catch(function() {
+      alert("Kopiëren niet gelukt. Probeer Chrome of Edge.");
+    });
+}
+</script>
+```
+
+```{r rt-mini-toc}
+#| results: asis
+clusters <- obj$meta$clusters_volgorde
+
+# Alleen clusters met daadwerkelijke respons behouden
+cls_freq <- obj$frequenties |>
+  filter(n > 0) |>
+  pull(cluster_id) |>
+  unique()
+cls_desc <- obj$descriptives |>
+  filter(n_valid > 0) |>
+  pull(cluster_id) |>
+  unique()
+clusters <- intersect(clusters, union(cls_freq, cls_desc))
+
+# Mini-TOC — werkt ongeacht de toggle-staat
+cat('<div class="mini-toc">\n')
+for (cl in clusters) {
+  vraag <- obj$frequenties |>
+    filter(cluster_id == cl) |>
+    pull(vraag_tekst) |>
+    first()
+  if (is.na(vraag) || is.null(vraag)) {
+    vraag <- obj$descriptives |>
+      filter(cluster_id == cl) |>
+      pull(vraag_tekst) |>
+      first()
+  }
+  kort <- if (!is.na(vraag) && nchar(vraag) > 60) {
+    paste0(substr(vraag, 1, 58), "…")
+  } else {
+    vraag %||% cl
+  }
+  cat(sprintf('<a href="#cluster-%s-freq">%s. %s</a>\n',
+              cl, cl, htmltools::htmlEscape(kort)))
+}
+cat('</div>\n')
+```
+
+
+
+```{r rt-tabellen-loop}
+# ---- Helperfuncties tabellen ----
+
+maak_freq_tabel <- function(freq_cl) {
+
+  tbl_breed <- freq_cl |>
+    select(variabele, label, n_valid, antwoord_label, n, pct) |>
+    mutate(
+      n_fmt   = n,
+      pct_fmt = fmt_pct(pct)
+    )
+
+  tbl_n <- tbl_breed |>
+    select(variabele, label, n_valid, antwoord_label, n_fmt) |>
+    tidyr::pivot_wider(
+      names_from  = antwoord_label,
+      values_from = n_fmt,
+      names_glue  = "{antwoord_label} (n)"
+    )
+
+  tbl_pct <- tbl_breed |>
+    select(variabele, antwoord_label, pct_fmt) |>
+    tidyr::pivot_wider(
+      names_from  = antwoord_label,
+      values_from = pct_fmt,
+      names_glue  = "{antwoord_label} (%)"
+    )
+
+  tbl_wide <- left_join(tbl_n, tbl_pct, by = "variabele") |>
+    rename(
+      Variabele  = variabele,
+      Label      = label,
+      `N totaal` = n_valid
+    )
+
+  DT::datatable(
+    tbl_wide,
+    extensions = "Buttons",
+    options    = dt_opties,
+    rownames   = FALSE
+  )
+}
+
+
+maak_multiselect_tabel <- function(multi_cl) {
+
+  if (nrow(multi_cl) == 0) {
+    return(NULL)
+  }
+
+  benodigde_kolommen <- c(
+    "gem_aangevinkt",
+    "mediaan_aangevinkt",
+    "min_aangevinkt",
+    "max_aangevinkt",
+    "n_heeft_ingevuld",
+    "n_items",
+    "n_nul_items"
+  )
+
+  if (!all(benodigde_kolommen %in% names(multi_cl))) {
+    return(NULL)
+  }
+
+  multi_fmt <- multi_cl |>
+    transmute(
+      `Gem. aangevinkt`  = fmt_stat(gem_aangevinkt),
+      `Mediaan`          = mediaan_aangevinkt,
+      `Min`              = min_aangevinkt,
+      `Max`              = max_aangevinkt,
+      `N (ingevuld)`     = n_heeft_ingevuld,
+      `Aantal items`     = n_items,
+      `Items door niemand aangevinkt` = n_nul_items
+    )
+
+  DT::datatable(
+    multi_fmt,
+    options  = list(dom = "t", paging = FALSE),
+    rownames = FALSE
+  )
+}
+
+
+maak_desc_tabel <- function(desc_cl) {
+
+  if (nrow(desc_cl) == 0) {
+    return(NULL)
+  }
+
+  tbl_desc <- desc_cl |>
+    transmute(
+      Variabele  = variabele,
+      Label      = label,
+      `N totaal` = n_valid,
+      Gem        = fmt_stat(gem),
+      Mediaan    = fmt_stat(mediaan),
+      SD         = fmt_stat(sd),
+      Min        = min,
+      Max        = max
+    )
+
+  DT::datatable(
+    tbl_desc,
+    extensions = "Buttons",
+    options    = dt_opties,
+    rownames   = FALSE
+  )
+}
+
+
+render_cluster_tabellen <- function(cl, sorteer_modus = c("freq", "orig")) {
+
+  sorteer_modus <- match.arg(sorteer_modus)
+
+  freq_cl <- obj$frequenties |>
+    filter(cluster_id == cl)
+
+  desc_cl <- obj$descriptives |>
+    filter(cluster_id == cl)
+
+  if (nrow(freq_cl) == 0 && nrow(desc_cl) == 0) {
+    return(NULL)
+  }
+
+  # Sorteer frequenties op basis van modus
+  if (nrow(freq_cl) > 0) {
+    freq_cl <- sorteer_cluster(freq_cl, sorteer_modus)
+  }
+
+  vraag_tekst <- if (nrow(freq_cl) > 0) {
+    first(freq_cl$vraag_tekst)
+  } else if (nrow(desc_cl) > 0) {
+    first(desc_cl$vraag_tekst)
+  } else {
+    ""
+  }
+
+  # N-bijschrift: unieke n_valid binnen het cluster
+  if (nrow(freq_cl) > 0) {
+    n_vals <- unique(freq_cl$n_valid)
+  } else {
+    n_vals <- unique(desc_cl$n_valid)
+  }
+  n_tekst <- if (length(n_vals) == 1) {
+    sprintf("(n = %s)", n_vals[1])
+  } else {
+    "(n varieert, zie tabel)"
+  }
+
+  onderdelen <- list(
+    htmltools::tags$p(
+      class = "cluster-vraag",
+      vraag_tekst %||% "",
+      " ",
+      htmltools::tags$span(class = "cluster-n", n_tekst)
+    )
+  )
+
+  if (nrow(freq_cl) > 0) {
+    onderdelen <- append(
+      onderdelen,
+      list(maak_freq_tabel(freq_cl))
+    )
+
+    multi_cl <- obj$multiselect |>
+      filter(cluster_id == cl)
+
+    multi_tabel <- maak_multiselect_tabel(multi_cl)
+
+    if (!is.null(multi_tabel)) {
+      onderdelen <- append(
+        onderdelen,
+        list(multi_tabel)
+      )
+    }
+  }
+
+  if (nrow(desc_cl) > 0) {
+    desc_tabel <- maak_desc_tabel(desc_cl)
+
+    if (!is.null(desc_tabel)) {
+      onderdelen <- append(
+        onderdelen,
+        list(desc_tabel)
+      )
+    }
+  }
+
+  onderdelen <- Filter(Negate(is.null), onderdelen)
+
+  do.call(
+    htmltools::tags$div,
+    c(
+      list(
+        id    = paste0("cluster-", cl, "-", sorteer_modus),
+        class = "cluster-sectie"
+      ),
+      onderdelen
+    )
+  )
+}
+
+
+# ---- Render tabellen: twee divs (freq / orig) ----
+# Gebruik htmltools::tagList zodat knitr de DT-afhankelijkheden laadt
+
+alle_onderdelen <- list()
+
+for (sm in c("freq", "orig")) {
+  div_id <- paste0("rt-tabellen-", sm)
+
+  alle_onderdelen <- c(
+    alle_onderdelen,
+    list(htmltools::HTML(sprintf('<div id="%s">', div_id))),
+    list(htmltools::HTML(sprintf(
+      '<button class="kopieer-alle-knop" onclick="kopieerAlleTabellen(\'%s\')">Kopieer alle tabellen</button>',
+      div_id
+    ))),
+    list(htmltools::tagList(
+      Filter(
+        Negate(is.null),
+        lapply(clusters, render_cluster_tabellen, sorteer_modus = sm)
+      )
+    )),
+    list(htmltools::HTML('</div>'))
+  )
+}
+
+htmltools::tagList(alle_onderdelen)
+```
+
+
+
+```{r rt-figuren-loop}
+#| results: asis
+
+for (sm in c("freq", "orig")) {
+  div_id <- paste0("rt-figuren-", sm)
+  cat(sprintf('<div id="%s">\n', div_id))
+
+  for (cl in clusters) {
+    freq_cl <- obj$frequenties |>
+      filter(cluster_id == cl, grafiek_inclusie == TRUE)
+
+    if (nrow(freq_cl) == 0) next
+
+    # Sorteer op basis van modus
+    freq_cl <- sorteer_cluster(freq_cl, sm)
+
+    vraag_tekst  <- first(freq_cl$vraag_tekst)
+    chart_type_cl <- first(freq_cl$chart_type) %||% "bar"
+
+    # N-bijschrift
+    n_vals  <- unique(freq_cl$n_valid)
+    n_tekst <- if (length(n_vals) == 1) {
+      sprintf("(n = %s)", n_vals[1])
+    } else {
+      "(n varieert, zie tabel)"
+    }
+
+    cat(sprintf(
+      '<div class="cluster-sectie" id="fig-cluster-%s-%s">\n',
+      cl, sm
+    ))
+    cat(sprintf(
+      '<p class="cluster-vraag">%s <span class="cluster-n">%s</span></p>\n',
+      htmltools::htmlEscape(vraag_tekst %||% ""),
+      n_tekst
+    ))
+
+    # Bouw figuur
+    antwoord_labels <- freq_cl |>
+      distinct(antwoord_label) |>
+      pull(antwoord_label)
+
+    is_ja_nee <- all(
+      stringr::str_to_lower(stringr::str_trim(antwoord_labels)) %in% c("ja", "nee")
+    ) &&
+      any(stringr::str_to_lower(stringr::str_trim(antwoord_labels)) == "ja")
+
+    if (is_ja_nee) {
+
+      plot_data <- freq_cl |>
+        filter(stringr::str_to_lower(stringr::str_trim(antwoord_label)) == "ja") |>
+        mutate(
+          pct_fmt    = fmt_pct(pct),
+          # Gebruik de gesorteerde volgorde; reverseer zodat hoogste bovenaan staat
+          label_plot = forcats::fct_rev(
+            factor(stringr::str_wrap(label, width = 60),
+                   levels = unique(stringr::str_wrap(label, width = 60)))
+          )
+        )
+
+      p <- ggplot(plot_data, aes(x = pct, y = label_plot)) +
+        geom_col(fill = "#5C2482") +
+        geom_text(aes(label = pct_fmt), hjust = -0.1, size = 3, color = "#5C2482") +
+        scale_x_continuous(
+          limits = c(0, 110),
+          labels = function(x) paste0(x, "%")
+        ) +
+        labs(x = NULL, y = NULL) +
+        theme_minimal()
+
+    } else {
+
+      plot_data <- freq_cl |>
+        mutate(
+          pct_fmt = fmt_pct(pct),
+          # Gebruik de gesorteerde volgorde; reverseer zodat hoogste bovenaan staat
+          antwoord = forcats::fct_rev(
+            factor(antwoord_label, levels = unique(antwoord_label))
+          )
+        )
+
+      if (chart_type_cl == "stacked") {
+        p <- ggplot(plot_data, aes(x = pct, y = label, fill = antwoord_label)) +
+          geom_col(position = "stack") +
+          geom_text(
+            aes(label = pct_fmt),
+            position = position_stack(vjust = 0.5),
+            size = 3
+          ) +
+          labs(x = "%", y = NULL, fill = NULL) +
+          theme_minimal() +
+          theme(legend.position = "bottom")
+      } else {
+        p <- ggplot(plot_data, aes(x = pct, y = antwoord)) +
+          geom_col(fill = "#5C2482") +
+          geom_text(aes(label = pct_fmt), hjust = -0.1, size = 3, color = "#5C2482") +
+          facet_wrap(~ label, ncol = 1, scales = "free_y") +
+          scale_x_continuous(
+            limits = c(0, 110),
+            labels = function(x) paste0(x, "%")
+          ) +
+          labs(x = NULL, y = NULL) +
+          theme_minimal()
+      }
+    }
+
+    print(p)
+
+    # Embed underlying table data as JSON for the "Kopieer tabel" button
+    tabel_data <- freq_cl |>
+      select(label, antwoord_label, n, pct) |>
+      mutate(pct = rond_af(pct, pct_dec))
+
+    tabel_json <- jsonlite::toJSON(tabel_data, dataframe = "rows")
+    cat(sprintf(
+      '<script type="application/json" class="fig-data">%s</script>\n',
+      tabel_json
+    ))
+
+    cat('</div>\n\n')
+  }
+
+  cat('</div>\n')
+}
+```
+
+
+
+
+
+## Kruisingen
+
+```{r gkf-check}
+#| results: asis
+if (heeft_fout) {
+  cat('<div class="banner-fout">',
+      '⚠️ <strong>Tabblad niet beschikbaar wegens validatiefouten.</strong> ',
+      'Los eerst de fouten op de Overzicht-pagina op.',
+      '</div>')
+  knitr::knit_exit()
+}
+if (nrow(obj$kruistabellen) == 0) {
+  cat(
+    '<div class="callout-note">',
+    '<p>Er zijn geen kruisvariabelen geconfigureerd in <code>config.R</code>.</p>',
+    '<p>Voeg een <code>kruis_vars</code>-lijst toe om gekruiste figuren te activeren.</p>',
+    '</div>'
+  )
+}
+```
+
+```{r gkf-knoppen, results='asis'}
+if (nrow(obj$kruistabellen) > 0) {
+  kv_unique <- obj$kruistabellen |>
+    distinct(kruisvariabele, kruis_label) |>
+    arrange(kruisvariabele)
+
+  cat('<div class="wissel-knoppen" id="gkf-knoppen">\n')
+  for (i in seq_len(nrow(kv_unique))) {
+    kv_label <- kv_unique$kruis_label[i]
+    kv_id    <- gsub("[^a-zA-Z0-9_-]", "_", kv_unique$kruisvariabele[i])
+    actief   <- if (i == 1) ' class="actief"' else ''
+    cat(sprintf(
+      '<button%s onclick="gkfWisselKV(\'%s\', this)">%s</button>\n',
+      actief, kv_id, htmltools::htmlEscape(kv_label)
+    ))
+  }
+  cat('</div>\n')
+}
+```
+
+```{=html}
+<script>
+function gkfWisselKV(kv, knop) {
+  document.querySelectorAll('#gkf-knoppen button').forEach(function(b) {
+    b.classList.remove('actief');
+  });
+  knop.classList.add('actief');
+  document.querySelectorAll('.gkf-kv').forEach(function(div) {
+    div.style.display = 'none';
+  });
+  var target = document.getElementById('gkf-kv-' + kv);
+  if (target) {
+    target.style.display = 'block';
+    gkfToonWeergave(kv, 'tabellen');
+  }
+}
+</script>
+```
+
+```{=html}
+<script>
+function gkfToonWeergave(kvId, weergave) {
+  var t = document.getElementById('gkf-kv-' + kvId + '-tabellen');
+  var f = document.getElementById('gkf-kv-' + kvId + '-figuren');
+  if (t) t.style.display = weergave === 'tabellen' ? 'block' : 'none';
+  if (f) f.style.display = weergave === 'figuren' ? 'block' : 'none';
+  var container = document.getElementById('gkf-kv-' + kvId);
+  if (container) {
+    container.querySelectorAll('[data-gkf-weergave]').forEach(function(btn) {
+      btn.classList.toggle('actief', btn.getAttribute('data-gkf-weergave') === weergave);
+    });
+  }
+}
+
+function gkfWisselWeergave(kvId, weergave) {
+  gkfToonWeergave(kvId, weergave);
+}
+</script>
+```
+
+```{r gkf-content, results='asis', fig.width=8, fig.height=6}
+if (nrow(obj$kruistabellen) > 0) {
+
+  kv_unique <- obj$kruistabellen |>
+    distinct(kruisvariabele, kruis_label) |>
+    arrange(kruisvariabele)
+
+  for (i in seq_len(nrow(kv_unique))) {
+    kv       <- kv_unique$kruisvariabele[i]
+    kv_label <- kv_unique$kruis_label[i]
+    kv_id    <- gsub("[^a-zA-Z0-9_-]", "_", kv)
+    display  <- if (i == 1) ' style="display:block;"' else ' style="display:none;"'
+
+    cat(sprintf('<div id="gkf-kv-%s" class="gkf-kv"%s>\n', kv_id, display))
+
+    # ---- Descriptives: frequentietabel per KV-categorie ----
+    # Percentages komen uit het analyseobject ($kruis_verdeling); hier
+    # alleen afronden/formatteren.
+    kv_desc <- obj$kruis_verdeling |>
+      filter(kruisvariabele == kv) |>
+      arrange(kruis_categorie) |>
+      mutate(pct_kv_fmt = fmt_pct(pct))
+
+    cat(sprintf(
+      '<p><strong>%s</strong> \u2014 %d respondenten</p>\n',
+      htmltools::htmlEscape(kv_label),
+      sum(kv_desc$n_kruis)
+    ))
+
+    tbl <- kv_desc |>
+      select(Categorie = kruis_categorie, n = n_kruis, `%` = pct_kv_fmt)
+    cat(knitr::kable(md_veilig_tabel(tbl), format = "html", escape = FALSE, table.attr = 'class="kv-desc-tabel"'))
+    cat('\n')
+
+    # ---- Mini-TOC ----
+    cls <- obj$kruistabellen |>
+      filter(kruisvariabele == kv) |>
+      group_by(cluster_id) |>
+      filter(sum(k) > 0) |>
+      pull(cluster_id) |>
+      unique()
+
+    if (length(cls) == 0) {
+      cat('</div>\n')  # sluit gkf-kv- div
+      next
+    }
+
+    cat('<div class="mini-toc">\n')
+    cat('<strong>Snel naar:</strong>\n')
+    for (cl in cls) {
+      vraag <- obj$kruistabellen |>
+        filter(kruisvariabele == kv, cluster_id == cl) |>
+        pull(vraag_tekst) |>
+        first()
+      kort <- if (!is.na(vraag) && nchar(vraag) > 60) {
+        paste0(substr(vraag, 1, 58), "\u2026")
+      } else {
+        vraag
+      }
+      cat(sprintf(
+        '<a href="#gkf-%s-%s-tabel">%s. %s</a>\n',
+        kv_id, cl, cl, htmltools::htmlEscape(kort)
+      ))
+    }
+    cat('</div>\n')
+
+    # ---- Subgroep-overzicht (eenmalig per kruisvariabele) ----
+    n_overzicht <- obj$kruistabellen |>
+      filter(kruisvariabele == kv) |>
+      distinct(kruis_categorie, n_kruis) |>
+      arrange(kruis_categorie)
+
+    n_tekst <- paste(
+      sprintf("%s (n=%d)", n_overzicht$kruis_categorie, n_overzicht$n_kruis),
+      collapse = ", "
+    )
+    cat(sprintf(
+      '<p class="gkf-subgroepen">Subgroepen: %s</p>\n\n',
+      htmltools::htmlEscape(n_tekst)
+    ))
+
+    # ---- Sub-toggle: Tabellen / Figuren ----
+    cat('<div class="wissel-knoppen">\n')
+    cat(sprintf(
+      '  <button class="actief" data-gkf-weergave="tabellen" onclick="gkfWisselWeergave(\'%s\', \'tabellen\')">Tabellen</button>\n',
+      kv_id
+    ))
+    cat(sprintf(
+      '  <button data-gkf-weergave="figuren" onclick="gkfWisselWeergave(\'%s\', \'figuren\')">Figuren</button>\n',
+      kv_id
+    ))
+    cat('</div>\n')
+
+    # Categorievolgorde op oorspronkelijke numerieke code
+    cat_volgorde <- if (!is.null(obj$kv_codes[[kv]])) {
+      obj$kv_codes[[kv]] |> arrange(code) |> pull(label)
+    } else {
+      obj$kruistabellen |>
+        filter(kruisvariabele == kv) |>
+        pull(kruis_categorie) |>
+        unique()
+    }
+
+    # ---- Tabellen per cluster ----
+    cat(sprintf('<div id="gkf-kv-%s-tabellen">\n', kv_id))
+    cat(sprintf(
+      '<button class="kopieer-alle-knop" onclick="kopieerAlleTabellen(\'gkf-kv-%s-tabellen\')">Kopieer alle tabellen</button>\n',
+      kv_id
+    ))
+
+    for (cl in cls) {
+      kt_cl <- obj$kruistabellen |>
+        filter(kruisvariabele == kv, cluster_id == cl)
+
+      if (all(kt_cl$k == 0)) next
+
+      vraag_tekst <- first(kt_cl$vraag_tekst)
+
+      kt_wide <- kt_cl |>
+        mutate(
+          kruis_categorie = factor(kruis_categorie,
+            levels = intersect(cat_volgorde, unique(kruis_categorie))),
+          cel = sprintf("%d/%d (%s)", k, n, fmt_pct(pct))
+        ) |>
+        select(variabele, label, kruis_categorie, cel) |>
+        tidyr::pivot_wider(names_from = kruis_categorie, values_from = cel, values_fill = "") |>
+        rename(Variabele = variabele, Label = label)
+
+      cat(sprintf('<div class="cluster-sectie" id="gkf-%s-%s-tabel">\n', kv_id, cl))
+      cat(sprintf('<p class="cluster-vraag">%s</p>\n',
+          md_veilig(htmltools::htmlEscape(vraag_tekst %||% ""))))
+      cat('<p class="cluster-n">Percentage \'Ja\' per subgroep (k/n)</p>\n')
+      cat(knitr::kable(md_veilig_tabel(kt_wide), format = "html", escape = FALSE,
+          table.attr = 'class="table table-sm kv-desc-tabel"'))
+      cat('\n')
+      cat('</div>\n\n')
+    }
+    cat('</div>\n')  # einde tabellen-div
+
+    # ---- Figuren per cluster ----
+    cat(sprintf('<div id="gkf-kv-%s-figuren" style="display:none;">\n', kv_id))
+    for (cl in cls) {
+      kt_cl <- obj$kruistabellen |>
+        filter(kruisvariabele == kv, cluster_id == cl)
+
+      # Sla clusters over zonder Ja-antwoorden
+      if (all(kt_cl$k == 0)) next
+
+      vraag_tekst <- first(kt_cl$vraag_tekst)
+      n_vars <- n_distinct(kt_cl$variabele)
+
+      cat(sprintf(
+        '<div class="cluster-sectie" id="gkf-%s-%s">\n',
+        kv_id, cl
+      ))
+      cat(sprintf(
+        '<p class="cluster-vraag">%s</p>\n',
+        md_veilig(htmltools::htmlEscape(vraag_tekst %||% ""))
+      ))
+
+      # Plotdata
+      plot_data <- kt_cl |>
+        mutate(
+          label_plot = stringr::str_wrap(label, width = 55),
+          label_plot = forcats::fct_rev(factor(label_plot, levels = unique(label_plot))),
+          pct_fmt    = fmt_pct(pct),
+          ster       = if_else(n >= 5 & n < 10, "*", ""),
+          label_tekst = case_when(
+            n < 5  ~ paste0("(", k, "/", n, ")*"),
+            TRUE   ~ paste0(pct_fmt, " (", k, "/", n, ")", ster)
+          ),
+          is_klein   = n < 5,
+          pct_norm   = if_else(n >= 5, pct, NA_real_),
+          pct_klein  = if_else(n < 5,  pct, NA_real_),
+          kruis_categorie = factor(kruis_categorie,
+            levels = intersect(cat_volgorde, unique(kruis_categorie))),
+        )
+
+      max_pct <- max(plot_data$pct, na.rm = TRUE)
+      x_lim   <- if (is.finite(max_pct)) max(max_pct * 1.3, 15) else 100
+
+      # Dynamische figuurhoogte
+      fig_h <- 1.8 + n_vars * 0.55
+
+      p <- ggplot(plot_data, aes(y = label_plot, fill = kruis_categorie)) +
+        # Normale staven (n ≥ 5)
+        geom_col(
+          aes(x = pct_norm),
+          width = 0.55,
+          position = position_dodge(width = 0.75),
+          na.rm = TRUE
+        )
+
+      # Gestreepte staven (n < 5) — alleen met ggpattern beschikbaar
+      if (has_ggpattern) {
+        p <- p +
+          ggpattern::geom_col_pattern(
+            aes(x = pct_klein),
+            pattern        = "stripe",
+            pattern_fill   = "white",
+            pattern_colour = NA,
+            pattern_angle  = 45,
+            pattern_spacing = 0.03,
+            width = 0.55,
+            position = position_dodge(width = 0.75),
+            na.rm = TRUE,
+            show.legend = FALSE
+          )
+      }
+
+      p <- p +
+        geom_text(
+          aes(x = pct, label = label_tekst),
+          position = position_dodge(width = 0.75),
+          hjust = 0,
+          size = 2.8
+        ) +
+        scale_x_continuous(
+          labels = function(x) paste0(x, "%"),
+          limits = c(0, x_lim)
+        ) +
+        labs(x = NULL, y = NULL, fill = NULL) +
+        theme_minimal(base_size = 9) +
+        theme(
+          legend.position = "top",
+          panel.grid.major.y = element_blank()
+        )
+
+      knitr::opts_current$set(fig.height = fig_h)
+      cat('<figure>\n')
+      print(p)
+      cat('</figure>\n')
+
+      # Embed tabeldata als JSON voor kopieer-tabel-knop
+      tabel_data <- kt_cl |>
+        select(label, kruis_categorie, n, k, pct) |>
+        mutate(pct = rond_af(pct, pct_dec))
+
+      tabel_json <- jsonlite::toJSON(tabel_data, dataframe = "rows")
+      cat(sprintf(
+        '<script type="application/json" class="fig-data">%s</script>\n',
+        tabel_json
+      ))
+
+      cat('</div>\n\n')
+    }
+
+    cat('</div>\n')  # einde figuren-div
+    cat('</div>\n')  # einde gkf-kv- div
+  }
+}
+```
+
+
+## Open antwoorden (ruw)
+
+```{r oa-check}
+#| results: asis
+if (heeft_fout) {
+  cat('<div class="banner-fout">',
+      '⚠️ <strong>Tabblad niet beschikbaar wegens validatiefouten.</strong> ',
+      'Los eerst de fouten op de Overzicht-pagina op.',
+      '</div>')
+  knitr::knit_exit()
+}
+if (nrow(obj$open_samenvatting) == 0) {
+  cat(
+    '<div class="callout-note">',
+    '<p>Er zijn geen open vragen gevonden in de metadata.</p>',
+    '<p>Open vragen worden herkend aan een cluster dat eindigt op <code>_open</code>.</p>',
+    '</div>'
+  )
+}
+```
+
+```{r oa-prep}
+# Voorbereiding
+if (nrow(obj$open_samenvatting) > 0) {
+
+  ov_sorted <- obj$open_samenvatting |>
+    mutate(
+      num = suppressWarnings(as.numeric(str_extract(cluster_id, "^\\d+"))),
+      num = if_else(is.na(num), Inf, num)
+    ) |>
+    arrange(num, cluster_id)
+
+  # JSON voor Op respondent (Alle)
+  oa_json <- obj$open_antwoorden |>
+    select(resp_id, vraag_tekst, variabele, antwoord, n_woorden)
+}
+```
+
+```{=html}
+<script>
+function oaWisselAlle(weergave, knop) {
+  document.querySelectorAll('#oa-alle-knoppen button').forEach(function(b) {
+    b.classList.remove('actief');
+  });
+  knop.classList.add('actief');
+  document.getElementById('oa-alle-opvraag').style.display =
+    weergave === 'opvraag' ? 'block' : 'none';
+  document.getElementById('oa-alle-respondent').style.display =
+    weergave === 'respondent' ? 'block' : 'none';
+  document.getElementById('oa-alle-overzicht').style.display =
+    weergave === 'overzicht' ? 'block' : 'none';
+}
+
+function oaWisselVraag(cl, knop) {
+  knop.parentElement.querySelectorAll('button').forEach(function(b) {
+    b.classList.remove('actief');
+  });
+  knop.classList.add('actief');
+  knop.parentElement.parentElement.querySelectorAll('.oa-vraag-inhoud').forEach(function(d) {
+    d.style.display = 'none';
+  });
+  var t = document.getElementById('oa-vraag-' + cl);
+  if (t) t.style.display = 'block';
+}
+
+function oaBouwOverzichtTabel(containerId, dataRows, kolommen) {
+  var container = document.getElementById(containerId);
+  if (!container) return;
+  var afkap = function(tekst) {
+    tekst = (tekst === null || tekst === undefined) ? '' : String(tekst);
+    return tekst.length > 50 ? tekst.slice(0, 49) + '…' : tekst;
+  };
+  var esc = function(tekst) {
+    var d = document.createElement('div');
+    d.textContent = tekst;
+    return d.innerHTML;
+  };
+  var h = '<table class="table table-sm kv-desc-tabel"><thead><tr><th>Resp. ID</th>';
+  kolommen.forEach(function(k) { h += '<th>' + esc(k.label) + '</th>'; });
+  h += '</tr></thead><tbody>';
+  dataRows.forEach(function(r) {
+    h += '<tr><td>' + esc(r.resp_id) + '</td>';
+    kolommen.forEach(function(k) { h += '<td>' + esc(afkap(r[k.cluster_id])) + '</td>'; });
+    h += '</tr>';
+  });
+  h += '</tbody></table>';
+  container.innerHTML = h;
+}
+
+function oaBouwVraagTabel(containerId, dataRows) {
+  var container = document.getElementById(containerId);
+  if (!container) return;
+  var esc = function(tekst) {
+    var d = document.createElement('div');
+    d.textContent = (tekst === null || tekst === undefined) ? '' : String(tekst);
+    return d.innerHTML;
+  };
+  var h = '<table class="table table-sm"><thead><tr><th>Resp. ID</th>' +
+    '<th>Antwoord</th><th style="text-align:right;">Woorden</th></tr></thead><tbody>';
+  dataRows.forEach(function(r) {
+    h += '<tr><td>' + esc(r.resp_id) + '</td><td>' + esc(r.antwoord) +
+      '</td><td style="text-align:right;">' + esc(r.n_woorden) + '</td></tr>';
+  });
+  h += '</tbody></table>';
+  container.innerHTML = h;
+}
+</script>
+```
+
+```{r oa-alle, results='asis'}
+if (nrow(obj$open_samenvatting) > 0) {
+
+  cat('<div id="oa-alle">\n')
+
+  # ---- Sub-toggles ----
+  cat('<div class="wissel-knoppen" id="oa-alle-knoppen">\n')
+  cat('  <button class="actief" onclick="oaWisselAlle(\'opvraag\', this)">Op vraag</button>\n')
+  cat('  <button onclick="oaWisselAlle(\'respondent\', this)">Op respondent</button>\n')
+  cat('  <button onclick="oaWisselAlle(\'overzicht\', this)">Overzicht</button>\n')
+  cat('</div>\n')
+
+  # ========== OP VRAAG ==========
+  cat('<div id="oa-alle-opvraag">\n')
+
+  cat('<div class="wissel-knoppen">\n')
+  for (i in seq_len(nrow(ov_sorted))) {
+    cl <- ov_sorted$cluster_id[i]; vn <- ov_sorted$variabele[i]
+    kort <- ov_sorted$vraag_tekst[i]
+    if (nchar(kort) > 40) kort <- paste0(substr(kort, 1, 38), "\u2026")
+    actief <- if (i == 1) ' class="actief"' else ''
+    cat(sprintf('<button%s onclick="oaWisselVraag(\'a-%s\', this)">%s (%s)</button>\n',
+                actief, cl, htmltools::htmlEscape(kort), htmltools::htmlEscape(vn)))
+  }
+  cat('</div>\n')
+
+  for (i in seq_len(nrow(ov_sorted))) {
+    cl <- ov_sorted$cluster_id[i]; vn <- ov_sorted$variabele[i]
+    vraag <- ov_sorted$vraag_tekst[i]; var_label <- ov_sorted$var_label[i]
+    n_inv <- ov_sorted$n_invullers[i]
+    display <- if (i == 1) ' style="display:block;"' else ' style="display:none;"'
+
+    cat(sprintf('<div class="oa-vraag-inhoud" id="oa-vraag-a-%s"%s>\n', cl, display))
+
+    cat(sprintf('<p><strong>%s</strong> <span style="font-weight:normal;color:#888;">(%s)</span></p>\n',
+                htmltools::htmlEscape(vraag), htmltools::htmlEscape(vn)))
+    if (!is.na(var_label) && var_label != "") {
+      cat(sprintf('<p style="color:#888;font-size:0.85em;">SPSS-label: %s</p>\n',
+                  htmltools::htmlEscape(var_label)))
+    }
+
+    if (n_inv > 0) {
+      cat(sprintf('<p style="font-size:0.9em;">%d invuller(s) &mdash; gem. %s woorden, mediaan %s, min %s, max %s</p>\n',
+                  n_inv, fmt_stat(ov_sorted$gem_woorden[i]), fmt_stat(ov_sorted$mediaan_woorden[i]),
+                  ov_sorted$min_woorden[i], ov_sorted$max_woorden[i]))
+
+      antw <- obj$open_antwoorden |>
+        filter(cluster_id == cl) |> arrange(resp_id) |>
+        select(resp_id, antwoord, n_woorden)
+
+      cat(sprintf('<div id="oa-vraag-tabel-a-%s"></div>\n', cl))
+      cat(sprintf('<script>oaBouwVraagTabel("oa-vraag-tabel-a-%s", %s);</script>\n',
+                  cl, jsonlite::toJSON(antw, dataframe = "rows")))
+      cat(sprintf('<button class="kopieer-alle-knop" onclick="oaKopieerVraag(\'a-%s\')">\U0001F4CB Kopieer antwoorden</button>\n', cl))
+    } else {
+      cat('<p style="color:#999;font-size:0.9em;">Geen antwoorden.</p>\n')
+    }
+    cat('</div>\n\n')
+  }
+  cat('</div>\n')  # einde opvraag
+
+  # ========== OP RESPONDENT ==========
+  cat('<div id="oa-alle-respondent" style="display:none;">\n')
+
+  resp_ids <- obj$open_antwoorden |> distinct(resp_id) |> arrange(resp_id) |> pull(resp_id)
+  cat('<p><label for="oa-resp-select">Kies een respondent:</label></p>\n')
+  cat('<select id="oa-resp-select" onchange="oaToonRespondent()" style="max-width:300px;padding:4px 8px;">\n')
+  cat('<option value="">-- Selecteer --</option>\n')
+  for (rid in resp_ids) {
+    cat(sprintf('<option value="%s">%s</option>\n', htmltools::htmlEscape(rid), htmltools::htmlEscape(rid)))
+  }
+  cat('</select>\n<div id="oa-resp-output" style="margin-top:16px;"></div>\n')
+
+  cat(sprintf('<script>var oaData = %s;</script>\n', jsonlite::toJSON(oa_json, dataframe = "rows")))
+  cat('</div>\n')  # einde respondent
+
+  # ========== OVERZICHT ==========
+  cat('<div id="oa-alle-overzicht" style="display:none;">\n')
+
+  kolom_labels <- character(0)
+  for (j in seq_len(nrow(ov_sorted))) {
+    vn <- ov_sorted$variabele[j]; kort <- ov_sorted$vraag_tekst[j]
+    if (nchar(kort) > 22) kort <- paste0(substr(kort, 1, 20), "\u2026")
+    kolom_labels <- c(kolom_labels, paste0(kort, " (", vn, ")"))
+  }
+
+  cat('<button class="kopieer-alle-knop" onclick="oaKopieerOverzicht()">\U0001F4CB Kopieer alle open antwoorden</button>\n')
+  cat('<div id="oa-alle-overzicht-tabel"></div>\n')
+
+  breed_volledig <- obj$open_antwoorden |>
+    select(resp_id, cluster_id, antwoord) |>
+    tidyr::pivot_wider(names_from = cluster_id, values_from = antwoord, values_fill = "")
+  for (cl in ov_sorted$cluster_id) if (!cl %in% names(breed_volledig)) breed_volledig[[cl]] <- ""
+  breed_volledig <- breed_volledig |> select(resp_id, all_of(ov_sorted$cluster_id))
+  cat(sprintf('<script>var oaOverzichtData = %s;</script>\n',
+              jsonlite::toJSON(breed_volledig, dataframe = "rows")))
+  cat(sprintf('<script>var oaOverzichtKolommen = %s;</script>\n',
+              jsonlite::toJSON(data.frame(cluster_id = ov_sorted$cluster_id, label = kolom_labels, stringsAsFactors = FALSE))))
+  cat('<script>oaBouwOverzichtTabel("oa-alle-overzicht-tabel", oaOverzichtData, oaOverzichtKolommen);</script>\n')
+
+  cat('</div>\n')  # einde overzicht
+  cat('</div>\n')  # einde oa-alle
+}
+```
+
+```{=html}
+<script>
+function oaToonRespondent() {
+  var rid = document.getElementById('oa-resp-select').value;
+  var out = document.getElementById('oa-resp-output');
+  if (!rid) { out.innerHTML = ''; return; }
+
+  var a = oaData.filter(function(r) { return r.resp_id === rid; });
+  if (a.length === 0) {
+    out.innerHTML = '<p style="color:#999;">Geen open antwoorden.</p>'; return;
+  }
+
+  var h = '<table class="table table-sm"><thead><tr>' +
+    '<th>Vraag</th><th>Var</th><th>Antwoord</th><th style="text-align:right;">Woorden</th>' +
+    '</tr></thead><tbody>';
+  a.forEach(function(r) {
+    h += '<tr><td>' + r.vraag_tekst + '</td><td>' + r.variabele +
+      '</td><td>' + r.antwoord + '</td><td style="text-align:right;">' + r.n_woorden + '</td></tr>';
+  });
+  h += '</tbody></table>';
+  h += '<button class="kopieer-alle-knop" onclick="oaKopieerRespondent()">\u{1F4CB} Kopieer antwoorden</button>';
+  out.innerHTML = h;
+}
+
+function oaKopieerRespondent() {
+  var rid = document.getElementById('oa-resp-select').value;
+  if (!rid) return;
+  var a = oaData.filter(function(r) { return r.resp_id === rid; });
+  var regels = ['Vraag\tVar\tAntwoord\tWoorden'];
+  a.forEach(function(r) {
+    regels.push(r.vraag_tekst + '\t' + r.variabele + '\t' + r.antwoord + '\t' + r.n_woorden);
+  });
+  navigator.clipboard.writeText(regels.join('\n')).then(function() {
+    var btn = document.querySelector('#oa-alle-respondent .kopieer-alle-knop');
+    if (btn) { btn.textContent = '\u2713 Gekopieerd';
+      setTimeout(function() { btn.textContent = '\u{1F4CB} Kopieer antwoorden'; }, 2500); }
+  }).catch(function() { alert('Kopiëren niet gelukt.'); });
+}
+
+function oaKopieerOverzicht() {
+  if (typeof oaOverzichtData === 'undefined') return;
+  var hdrs = Object.keys(oaOverzichtData[0]);
+  var regels = [hdrs.join('\t')];
+  oaOverzichtData.forEach(function(r) {
+    regels.push(hdrs.map(function(h) { return r[h] || ''; }).join('\t'));
+  });
+  navigator.clipboard.writeText(regels.join('\n')).then(function() {
+    var btn = document.querySelector('#oa-alle-overzicht .kopieer-alle-knop');
+    if (btn) { btn.textContent = '\u2713 Gekopieerd';
+      setTimeout(function() { btn.textContent = '\u{1F4CB} Kopieer alle open antwoorden'; }, 2500); }
+  }).catch(function() { alert('Kopiëren niet gelukt.'); });
+}
+
+function oaKopieerVraag(cl) {
+  var div = document.getElementById('oa-vraag-' + cl);
+  if (!div) return;
+  var regels = [];
+  div.querySelectorAll('table tr').forEach(function(rij) {
+    regels.push(Array.from(rij.querySelectorAll('th, td')).map(function(c) { return c.textContent.trim(); }).join('\t'));
+  });
+  navigator.clipboard.writeText(regels.join('\n')).then(function() {
+    var btn = div.querySelector('.kopieer-alle-knop');
+    if (btn) { btn.textContent = '\u2713 Gekopieerd';
+      setTimeout(function() { btn.textContent = '\u{1F4CB} Kopieer antwoorden'; }, 2500); }
+  }).catch(function() { alert('Kopiëren niet gelukt.'); });
+}
+</script>
+```
+
+
+
+:::
+
+```{r lkca-logo-footer}
+#| results: asis
+# Het logo zit niet in het package (eigendom LKCA); het pad komt uit
+# 03_config.R (logo_bestand). Zonder logo: alleen de tekstregel.
+if (nzchar(params$logo_bestand)) {
+cat(sprintf(
+  '<hr style="margin:40px 0 16px 0;border:none;border-top:1px solid #ddd;">
+   <p style="text-align:right;color:#999;font-size:0.82em;">
+     <img src="%s" alt="LKCA logo" style="height:75px;vertical-align:middle;opacity:0.7;margin-right:6px;">
+     <span>Landelijk kenniscentrum voor cultuureducatie en amateurkunst</span>
+   </p>',
+  knitr::image_uri(params$logo_bestand)
+))
+} else {
+cat(
+  '<hr style="margin:40px 0 16px 0;border:none;border-top:1px solid #ddd;">
+   <p style="text-align:right;color:#999;font-size:0.82em;">
+     <span>Landelijk kenniscentrum voor cultuureducatie en amateurkunst</span>
+   </p>'
+)
+}
+```

@@ -582,7 +582,10 @@ analyse_dataset <- function(
       aangemaakt_op = Sys.time(),
       r_version = R.version.string,
       n_clusters = length(clusters),
-      clusters_volgorde = clusters
+      clusters_volgorde = clusters,
+      # Sinds v2.0.0 (alleen toegevoegd, bestaande velden ongewijzigd):
+      engine_versie = engine_info()$versie,
+      engine_commit = engine_info()$commit
     ),
     frequenties = frequenties,
     descriptives = descriptives,

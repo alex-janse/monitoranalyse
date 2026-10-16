@@ -1,0 +1,3 @@
+Plaats hier je opgeschoonde SPSS-bestand (.sav).
+
+Dit is de enige map waar je bestanden in hoeft te zetten.

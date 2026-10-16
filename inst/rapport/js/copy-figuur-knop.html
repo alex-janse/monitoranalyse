@@ -1,0 +1,191 @@
+<script>
+// =============================================================================
+// copy-figuur-knop.js — ingesloten via include-in-header
+// Voegt een kopieerknop toe aan elke figuur in het HTML-rapport.
+//
+// Aanbevolen browser: Chrome of Edge.
+// Fallback bij ontbrekende Clipboard API: download als PNG.
+// =============================================================================
+document.addEventListener("DOMContentLoaded", function () {
+
+  document.querySelectorAll("figure").forEach(function (fig) {
+    var img = fig.querySelector("img");
+    if (!img) return;
+
+    // ---- Knop: Kopieer afbeelding ----
+    var btnImg = document.createElement("button");
+    btnImg.className   = "copy-fig-btn";
+    btnImg.textContent = "\uD83D\uDCCB Kopieer afbeelding";
+
+    btnImg.style.cssText = [
+      "display:inline-block",
+      "margin:6px 6px 0 0",
+      "padding:5px 12px",
+      "font-size:0.82em",
+      "cursor:pointer",
+      "border:1px solid #aaa",
+      "border-radius:4px",
+      "background:#f8f8f8",
+      "color:#333"
+    ].join(";");
+
+    btnImg.addEventListener("click", function () {
+      var src = img.src;
+      if (navigator.clipboard && typeof ClipboardItem !== "undefined") {
+        fetch(src)
+          .then(function (r) { return r.blob(); })
+          .then(function (blob) {
+            return navigator.clipboard.write([
+              new ClipboardItem({ "image/png": blob })
+            ]);
+          })
+          .then(function () {
+            btnImg.textContent = "\u2713 Gekopieerd";
+            setTimeout(function () {
+              btnImg.textContent = "\uD83D\uDCCB Kopieer afbeelding";
+            }, 2000);
+          })
+          .catch(function () { downloadFiguur(src, btnImg); });
+      } else {
+        downloadFiguur(src, btnImg);
+      }
+    });
+
+    fig.appendChild(btnImg);
+
+    // ---- Knop: Kopieer onderliggende tabel ----
+    var sectie = fig.closest(".cluster-sectie");
+    if (!sectie) return;
+
+    var dataScript = sectie.querySelector("script.fig-data");
+    if (!dataScript) return;
+
+    var btnTabel = document.createElement("button");
+    btnTabel.className   = "copy-fig-btn";
+    btnTabel.textContent = "\uD83D\uDCCB Kopieer tabel";
+
+    btnTabel.style.cssText = [
+      "display:inline-block",
+      "margin:6px 0 0 0",
+      "padding:5px 12px",
+      "font-size:0.82em",
+      "cursor:pointer",
+      "border:1px solid #aaa",
+      "border-radius:4px",
+      "background:#f8f8f8",
+      "color:#333"
+    ].join(";");
+
+    btnTabel.addEventListener("click", function () {
+      try {
+        var data = JSON.parse(dataScript.textContent);
+        var kolommen = Object.keys(data[0]);
+        var regels = [kolommen.join("\t")];
+
+        data.forEach(function (rij) {
+          regels.push(kolommen.map(function (k) {
+            return rij[k] !== null && rij[k] !== undefined ? String(rij[k]) : "";
+          }).join("\t"));
+        });
+
+        var tsv = regels.join("\n");
+
+        if (navigator.clipboard) {
+          navigator.clipboard.writeText(tsv)
+            .then(function () {
+              btnTabel.textContent = "\u2713 Gekopieerd";
+              setTimeout(function () {
+                btnTabel.textContent = "\uD83D\uDCCB Kopieer tabel";
+              }, 2000);
+            })
+            .catch(function () {
+              fallbackKopieerTekst(tsv, btnTabel);
+            });
+        } else {
+          fallbackKopieerTekst(tsv, btnTabel);
+        }
+      } catch (e) {
+        btnTabel.textContent = "\u26A0 Fout bij kopiëren";
+        setTimeout(function () {
+          btnTabel.textContent = "\uD83D\uDCCB Kopieer tabel";
+        }, 2000);
+      }
+    });
+
+    fig.appendChild(btnTabel);
+  });
+
+});
+
+function downloadFiguur(src, btn) {
+  var a = document.createElement("a");
+  a.href = src; a.download = "figuur.png";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  btn.textContent = "\u2193 Opgeslagen als PNG";
+  setTimeout(function () {
+    btn.textContent = "\uD83D\uDCCB Kopieer afbeelding";
+  }, 2500);
+}
+
+// =============================================================================
+// TOC-tab-fix: activeer Bootstrap tab als link-doel in verborgen tab-pane zit
+// Dit lost het probleem op dat Quarto sidebar-TOC links niet werken
+// wanneer de target in een inactieve Bootstrap tab zit.
+// =============================================================================
+document.addEventListener("DOMContentLoaded", function () {
+  document.addEventListener("click", function (e) {
+    var link = e.target.closest("a[href^='#']");
+    if (!link) return;
+
+    // Niet ingrijpen bij Bootstrap eigen tab-knoppen
+    if (link.hasAttribute("data-bs-toggle")) return;
+
+    var hash = link.getAttribute("href");
+    if (!hash || hash === "#") return;
+
+    var target = document.querySelector(hash);
+    if (!target) return;
+
+    var pane = target.closest(".tab-pane");
+    if (!pane || pane.classList.contains("active")) return;
+
+    e.preventDefault();
+    var tabBtn = document.querySelector(
+      '[data-bs-toggle="tab"][data-bs-target="#' + pane.id + '"]'
+    );
+    if (!tabBtn) return;
+
+    var bsTab = bootstrap.Tab.getInstance(tabBtn);
+    if (!bsTab) bsTab = new bootstrap.Tab(tabBtn);
+    bsTab.show();
+
+    pane.addEventListener("shown.bs.tab", function handler() {
+      pane.removeEventListener("shown.bs.tab", handler);
+      target.scrollIntoView({ behavior: "smooth" });
+      history.replaceState(null, null, hash);
+    }, { once: true });
+  });
+});
+
+function fallbackKopieerTekst(tekst, btn) {
+  // Fallback: toon tekst in een prompt zodat gebruiker handmatig kan kopiëren
+  var textarea = document.createElement("textarea");
+  textarea.value = tekst;
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  try {
+    document.execCommand("copy");
+    btn.textContent = "\u2713 Gekopieerd";
+  } catch (e) {
+    btn.textContent = "\u26A0 Kopiëren niet gelukt";
+  }
+  document.body.removeChild(textarea);
+  setTimeout(function () {
+    btn.textContent = "\uD83D\uDCCB Kopieer tabel";
+  }, 2000);
+}
+</script>

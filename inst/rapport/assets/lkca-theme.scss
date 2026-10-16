@@ -1,0 +1,38 @@
+/* LKCA Huisstijl thema — overrides op flatly (Bootstrap 5) */
+
+/*-- scss:defaults --*/
+// LKCA brandkleuren
+$lkca-paars:    #5C2482;
+$lkca-paars-d:  #481d68;
+$lkca-paars-l:  #ede4f4;
+
+// Bootstrap variabelen overschrijven
+$primary:       $lkca-paars;
+$link-color:    $lkca-paars;
+$navbar-bg:     $lkca-paars;
+
+// Buttons
+$btn-primary-bg:     $lkca-paars;
+$btn-primary-border: $lkca-paars-d;
+
+// Nav tabs
+$nav-tabs-link-active-color: $lkca-paars;
+$nav-tabs-link-active-border-color: $lkca-paars;
+
+/*-- scss:rules --*/
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+h1, h2, h3 {
+  color: $lkca-paars-d;
+}
+
+a {
+  color: $lkca-paars;
+  text-decoration: underline;
+}
+
+#TOC {
+  border-left: 3px solid $lkca-paars;
+}

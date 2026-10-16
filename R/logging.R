@@ -44,6 +44,8 @@ logging <- function(
       format(obj$meta$aangemaakt_op, "%d-%m-%Y %H:%M:%S")
     ),
     paste0("R-versie:         ", obj$meta$r_version),
+    paste0("Engineversie:     monitoranalyse ", obj$meta$engine_versie %||% "onbekend"),
+    paste0("Engine-commit:    ", obj$meta$engine_commit %||% "onbekend"),
     "",
     paste0("Bronbestand:      ", obj$meta$input_sav),
     paste0(

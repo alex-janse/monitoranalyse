@@ -2,9 +2,11 @@
 
 export(analyse_dataset)
 export(formatteer_pct)
+export(nieuw_project)
 export(read_data)
 export(read_metadata)
 export(rond_af)
+export(run_project)
 export(validate_input)
 importFrom(dplyr,
   across,

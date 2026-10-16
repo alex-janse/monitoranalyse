@@ -1,0 +1,8 @@
+Plaats hier je metadata-bestand.
+
+Toegestane formaten: .xlsx, .xls of .csv
+
+De pipeline verwacht minimaal de kolommen:
+- variabele
+- cluster
+- vraag
