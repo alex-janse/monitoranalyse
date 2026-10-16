@@ -1,0 +1,34 @@
+# RStudio / R
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
+
+# Claude Code: lokale sessiestate en lokaal (niet-publiek) ontwikkelgeheugen
+.claude/
+CLAUDE.local.md
+
+# Interne opdrachtbestanden (bevatten interne paden)
+PROMPT_*.txt
+
+# NOOIT data of output in deze (publieke) repo
+*.sav
+*.zsav
+*.por
+*.rds
+*.RData
+*.xlsx
+*.xls
+*.csv
+05_output/
+datapackage_*/
+analyse-output_*.html
+
+# Logo's horen niet in de repo (eigendom LKCA)
+*.jpg
+*.jpeg
+*.png
+
+# Build-artefacten
+*.tar.gz
+monitoranalyse.Rcheck/

@@ -1,0 +1,5 @@
+* text=auto eol=lf
+# Rapportbestanden byte-voor-byte bewaren (identieke HTML-output)
+inst/rapport/** -text
+*.sps -text
+*.Rproj -text

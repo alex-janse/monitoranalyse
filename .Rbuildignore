@@ -1,0 +1,13 @@
+^.*\.Rproj$
+^\.Rproj\.user$
+^\.git$
+^\.gitignore$
+^\.gitattributes$
+^CLAUDE\.md$
+^CLAUDE\.local\.md$
+^\.claude$
+^PROMPT_.*$
+^README\.md$
+^NEWS\.md$
+^LICENSE\.md$
+^dev$

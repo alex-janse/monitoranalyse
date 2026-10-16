@@ -1,0 +1,47 @@
+Package: monitoranalyse
+Type: Package
+Title: Analyse en Rapportage van LKCA-Monitordata
+Version: 2.0.0
+Authors@R:
+    person("Alex", "Janse", role = c("aut", "cre"),
+           email = "242792222+alex-janse@users.noreply.github.com")
+Description: Leest een opgeschoond SPSS-bestand (.sav) en een metadata-bestand
+    (.xlsx, .xls of .csv) in, valideert beide, bouwt een centraal
+    analyseobject (frequenties, beschrijvende statistieken, multiselect,
+    kruistabellen, open antwoorden) en maakt daaruit een zelfstandig
+    HTML-rapport met Quarto, plus een datapackage per run voor
+    reproduceerbaarheid.
+URL: https://github.com/alex-janse/monitoranalyse
+BugReports: https://github.com/alex-janse/monitoranalyse/issues
+Depends:
+    R (>= 4.1.0)
+Imports:
+    dplyr,
+    DT,
+    forcats,
+    ggplot2,
+    haven,
+    htmltools,
+    jsonlite,
+    knitr,
+    purrr,
+    quarto,
+    readxl,
+    rlang,
+    rmarkdown,
+    stats,
+    stringr,
+    tibble,
+    tidyr,
+    tools,
+    utils
+Suggests:
+    ggpattern,
+    testthat (>= 3.0.0),
+    withr
+Config/testthat/edition: 3
+Encoding: UTF-8
+Language: nl
+Roxygen: list(markdown = TRUE)
+SystemRequirements: Quarto (>= 1.4), meegeleverd met RStudio
+Config/roxygen2/version: 8.1.1
