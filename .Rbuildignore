@@ -1,4 +1,4 @@
-^.*\.Rproj$
+^[^/]*\.Rproj$
 ^\.Rproj\.user$
 ^\.git$
 ^\.gitignore$
@@ -7,7 +7,6 @@
 ^CLAUDE\.local\.md$
 ^\.claude$
 ^PROMPT_.*$
-^README\.md$
-^NEWS\.md$
 ^LICENSE\.md$
 ^dev$
+^docs$

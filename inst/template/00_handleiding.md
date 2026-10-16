@@ -2,6 +2,8 @@
 
 ## Snelstart — in 3 stappen
 
+**Eenmalig vooraf:** installeer het package `monitoranalyse` (zie [Installatie](#installatie-eenmalig)) en maak een projectmap met `monitoranalyse::nieuw_project()` (zie [Nieuw project aanmaken](#nieuw-project-aanmaken)). Deze map heb je nu voor je.
+
 **STAP 1 — Bestanden klaarzetten**
 Zet je opgeschoonde `.sav`-bestand en je metadata-bestand in de map `01_data/`. Dat is alles.
 
@@ -16,8 +18,7 @@ Open `02_Analyseproces.Rproj`. Dit is het startpunt — hierdoor weet RStudio wa
 Het analyseproces doet de rest: controleren, analyseren, rapport maken, archiveren.
 
 > ⚠ Open het project altijd via het `.Rproj`-bestand (02_), niet via losse scripts.  
-> ⚠ Zet de map op een lokale schijf, niet op OneDrive of SharePoint.  
-> ⚙ De eerste keer installeert het analyseproces automatisch ontbrekende packages.
+> ⚠ Zet de map op een lokale schijf, niet op OneDrive of SharePoint.
 
 ---
 
@@ -41,24 +42,102 @@ Belangrijk uitgangspunt:
 
 ## Inhoud
 
-1. #data-opschonen-in-spss
-2. #respondenten-controleren
-3. #variabelen-en-labels-controleren
-4. #cbs-data-of-andere-externe-data-koppelen
-5. #open-anders-namelijk-antwoorden-beoordelen
-6. #versies-van-opgeschoonde-bestanden-bewaren
-7. #metadata-bestand-maken
-8. #metadata-template-genereren-vanuit-spss
-9. #metadata-invullen
-10. #labels-op-clusterniveau-controleren
-11. #open-antwoorden-in-metadata
-12. #kruisingen-instellen
-13. #bestanden-in-de-projectmap-zetten
-14. #configuratie-invullen
-15. #analyseproces-uitvoeren
-16. #rapport-controleren
-17. #veelvoorkomende-problemen
-18. #checklist-voor-definitieve-run
+1. #installatie-eenmalig
+2. #nieuw-project-aanmaken
+3. #engine-bijwerken-of-een-specifieke-versie-gebruiken
+4. #data-opschonen-in-spss
+5. #respondenten-controleren
+6. #variabelen-en-labels-controleren
+7. #cbs-data-of-andere-externe-data-koppelen
+8. #open-anders-namelijk-antwoorden-beoordelen
+9. #versies-van-opgeschoonde-bestanden-bewaren
+10. #metadata-bestand-maken
+11. #metadata-template-genereren-vanuit-spss
+12. #metadata-invullen
+13. #labels-op-clusterniveau-controleren
+14. #open-antwoorden-in-metadata
+15. #kruisingen-instellen
+16. #bestanden-in-de-projectmap-zetten
+17. #configuratie-invullen
+18. #analyseproces-uitvoeren
+19. #rapport-controleren
+20. #veelvoorkomende-problemen
+21. #checklist-voor-definitieve-run
+
+---
+
+## Installatie (eenmalig)
+
+De rekenmotor ("engine") van het analyseproces is een R-package, `monitoranalyse`. Je installeert het één keer per computer.
+
+Nodig:
+
+- **R** (versie 4.1 of nieuwer) en **RStudio**. RStudio levert **Quarto** mee; dat is nodig om het rapport te maken.
+
+Plak in RStudio in de **Console** (het venster linksonder) deze twee regels en druk op Enter:
+
+```r
+install.packages("pak")
+pak::pak("alex-janse/monitoranalyse")
+```
+
+Dit installeert het package plus alles wat het nodig heeft. Dat kan de eerste keer een paar minuten duren.
+
+Controleren of het gelukt is:
+
+```r
+packageVersion("monitoranalyse")
+```
+
+> ⚙ Krijg je een vraag over het bijwerken van andere packages? Kies dan "All" of "Yes".
+
+---
+
+## Nieuw project aanmaken
+
+Maak voor elk monitorproject een eigen projectmap. Plak in de Console (pas het pad aan):
+
+```r
+monitoranalyse::nieuw_project("C:/Projecten/Monitor Poppodia 2026")
+```
+
+Let op: gebruik in R schuine strepen `/` in paden (niet `\`).
+
+Je krijgt dan deze map:
+
+```text
+Monitor Poppodia 2026/
+├── 00_handleiding.md        ← deze handleiding
+├── 01_data/                 ← zet hier je .sav en metadata
+├── 02_Analyseproces.Rproj   ← open dit in RStudio
+├── 03_config.R              ← vul 3 regels in
+├── 04_run_project.R         ← klik op Source (Ctrl+Shift+S)
+└── 05_output/               ← rapport + archief verschijnen hier
+```
+
+Daarna volg je de [Snelstart](#snelstart--in-3-stappen) bovenaan deze handleiding.
+
+`nieuw_project()` weigert een map die al bestaat en niet leeg is, zodat je nooit per ongeluk een bestaand project overschrijft.
+
+---
+
+## Engine bijwerken of een specifieke versie gebruiken
+
+**Bijwerken naar de nieuwste versie:**
+
+```r
+pak::pak("alex-janse/monitoranalyse")
+```
+
+Start RStudio daarna opnieuw.
+
+**Een specifieke versie installeren** (bijvoorbeeld om een eerder rapport exact na te maken):
+
+```r
+pak::pak("alex-janse/monitoranalyse@v2.0.0")
+```
+
+In `03_config.R` staat bij `engine_versie` met welke versie het project is gemaakt. Wijkt de geïnstalleerde versie daarvan af, dan krijg je bij het draaien een waarschuwing. De cijfers kunnen dan afwijken van eerdere runs. Elke run legt de gebruikte versie vast in het datapackage (`engine/ENGINE_VERSIE.txt` en `logs/run_log.txt`), inclusief de opdracht om exact die versie terug te zetten.
 
 ---
 
@@ -455,11 +534,26 @@ kruis_vars <- list(
 )
 ```
 
+**`resp_id_col`** is de naam van de kolom met het respondent-ID in je `.sav`-bestand. Deze moet **precies** gelijk zijn aan de kolomnaam in SPSS, inclusief hoofdletters en kleine letters. Heet de kolom in je data bijvoorbeeld `respid`, vul dan in:
+
+```r
+resp_id_col <- "respid"
+```
+
+Klopt dit niet, dan stopt de analyse direct na de controle met een melding als `Bedoel je resp_id_col <- "respid"?` (zie [Analyse gestopt: Respondent-ID kolom niet gevonden](#analyse-gestopt-respondent-id-kolom-niet-gevonden)).
+
 Gebruik altijd paden relatief aan de projectmap, dus meestal beginnend met:
 
 ```text
 01_data/
 ```
+
+Onderaan `03_config.R` staan nog twee instellingen die je meestal kunt laten staan:
+
+| Instelling | Betekenis |
+|---|---|
+| `logo_bestand` | Pad naar het LKCA-logo voor onderaan het rapport, bijvoorbeeld `"01_data/LKCA_logo.jpg"`. Het logo zit niet in het package; vraag het bij de data-analist. `NULL` = rapport zonder logo. |
+| `engine_versie` | Versie van het package waarmee het project is gemaakt (automatisch ingevuld). Zie [Engine bijwerken](#engine-bijwerken-of-een-specifieke-versie-gebruiken). |
 
 ---
 
@@ -481,7 +575,7 @@ De pipeline doet daarna automatisch:
 
 1. data inlezen;
 2. metadata inlezen;
-3. input controleren;
+3. input controleren (stopt direct bij een fout waar de analyse niet zonder kan, zoals een verkeerde `resp_id_col`);
 4. analyseobject maken;
 5. rapport renderen;
 6. logs en snapshots opslaan.
@@ -491,15 +585,17 @@ Het rapport en alle archiefbestanden komen in `05_output/`:
 ```text
 05_output/
 ├── analyse-output_<datum-tijd>.html        ← rapport, direct te openen
-└── datapackage_<datum-tijd>/               ← archiefmap
-    ├── analyse_object.rds
-    ├── audit_log.rds
-    ├── run_log.txt
-    ├── session_info.txt
-    ├── metadata_snapshot.xlsx
-    ├── renv.lock
-    ├── engine/                             ← engine-snapshot
-    └── input/                              ← ruwe data + config snapshot
+└── datapackage_<datum-tijd>/               ← archiefmap (kopie van het hele project)
+    ├── logs/
+    │   ├── analyse_object.rds
+    │   ├── audit_log.rds
+    │   ├── run_log.txt
+    │   ├── session_info.txt
+    │   └── metadata_snapshot.xlsx
+    ├── engine/                             ← gebruikte engine (versie, rapport, functies)
+    ├── 01_data/                            ← kopie van de invoer
+    ├── 03_config.R                         ← kopie van de config
+    └── ...
 ```
 
 Het rapport staat direct in `05_output/` met een datum- en tijdstempel in de bestandsnaam (bijv. `analyse-output_2026-07-16_1815.html`). De archiefbestanden staan in een map met dezelfde tijdstempel (`datapackage_2026-07-16_1815/`).
@@ -567,6 +663,36 @@ Controleer:
 
 ## Veelvoorkomende problemen
 
+### Het package 'monitoranalyse' is nog niet geïnstalleerd
+
+Installeer het eenmalig, zie [Installatie](#installatie-eenmalig).
+
+---
+
+### Quarto is niet gevonden
+
+Quarto is nodig om het rapport te maken en wordt met RStudio meegeleverd. Installeer een recente versie van RStudio (of Quarto los via https://quarto.org) en start RStudio opnieuw.
+
+---
+
+### Analyse gestopt: Respondent-ID kolom niet gevonden
+
+De kolomnaam in `resp_id_col` (in `03_config.R`) staat niet in het `.sav`-bestand. De melding stelt meestal een naam voor, bijvoorbeeld:
+
+```text
+Bedoel je resp_id_col <- "respid"?
+```
+
+Neem die over in `03_config.R` (let op hoofdletters en kleine letters), sla op en draai `04_run_project.R` opnieuw. Er is in dit geval nog geen rapport gemaakt; de details staan in `05_output/datapackage_<datum-tijd>/logs/run_log.txt`.
+
+---
+
+### Waarschuwing over engineversie
+
+Het project is gemaakt met een andere versie van `monitoranalyse` dan nu geïnstalleerd is. Zie [Engine bijwerken](#engine-bijwerken-of-een-specifieke-versie-gebruiken).
+
+---
+
 ### Bestand niet gevonden
 
 Controleer:
@@ -630,7 +756,7 @@ Controleer:
 Controleer:
 
 - eindigt het cluster op `_open`?
-- is `resp_id_col` goed ingesteld?
+- is `resp_id_col` goed ingesteld (precies de kolomnaam in SPSS)?
 - bevatten de open vragen daadwerkelijk tekst?
 - staan de open variabelen in de metadata?
 
