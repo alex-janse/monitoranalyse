@@ -11,6 +11,7 @@ Description: Leest een opgeschoond SPSS-bestand (.sav) en een metadata-bestand
     kruistabellen, open antwoorden) en maakt daaruit een zelfstandig
     HTML-rapport met Quarto, plus een datapackage per run voor
     reproduceerbaarheid.
+License: Nog te bepalen (wordt MIT na bevestiging eigenaar LKCA)
 URL: https://github.com/alex-janse/monitoranalyse
 BugReports: https://github.com/alex-janse/monitoranalyse/issues
 Depends:

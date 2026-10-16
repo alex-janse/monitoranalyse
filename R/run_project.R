@@ -217,7 +217,7 @@ lees_config <- function(pad) {
   if (!is.null(cfg$logo_bestand) && nzchar(cfg$logo_bestand) &&
     !file.exists(cfg$logo_bestand)) {
     warning(
-      "Logo niet gevonden: ", cfg$logo_bestand, " — het rapport wordt ",
+      "Logo niet gevonden: ", cfg$logo_bestand, " \u2014 het rapport wordt ",
       "zonder logo gemaakt. Controleer logo_bestand in ", pad, ".",
       call. = FALSE,
       immediate. = TRUE

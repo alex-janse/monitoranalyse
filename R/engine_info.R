@@ -38,7 +38,7 @@ controleer_engine_versie <- function(gewenst) {
   if (!identical(as.character(gewenst), huidig)) {
     warning(
       "\n[LET OP] Dit project hoort bij engineversie ", gewenst,
-      ", maar geïnstalleerd is versie ", huidig, ".\n",
+      ", maar ge\u00EFnstalleerd is versie ", huidig, ".\n",
       "De cijfers kunnen daardoor afwijken van eerdere runs van dit project.\n",
       "Wil je exact dezelfde versie gebruiken? Installeer die dan met:\n",
       "  pak::pak(\"alex-janse/monitoranalyse@v", gewenst, "\")\n",
@@ -79,7 +79,7 @@ archiveer_engine <- function(archief_map) {
   info <- engine_info()
   regels <- c(
     "# =============================================================================",
-    paste0("# monitoranalyse ", info$versie, " — alle functies van de engine"),
+    paste0("# monitoranalyse ", info$versie, " \u2014 alle functies van de engine"),
     "# Automatisch gegenereerd bij deze run (ter archivering, niet sourcen).",
     "# Herinstalleren van exact deze versie: zie ENGINE_VERSIE.txt",
     "# =============================================================================",
@@ -105,10 +105,10 @@ archiveer_engine <- function(archief_map) {
   }
   writeLines(
     c(
-      "monitoranalyse — gebruikte engine",
+      "monitoranalyse \u2014 gebruikte engine",
       "=====================================",
       paste0("Versie:        ", info$versie),
-      paste0("GitHub-commit: ", info$commit %|na|% "onbekend (niet vanaf GitHub geïnstalleerd)"),
+      paste0("GitHub-commit: ", info$commit %|na|% "onbekend (niet vanaf GitHub ge\u00EFnstalleerd)"),
       "",
       "Exact deze versie opnieuw installeren:",
       paste0("  ", installatie)
