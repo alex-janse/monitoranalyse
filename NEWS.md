@@ -1,7 +1,21 @@
+# monitoranalyse 2.0.1
+
+Alleen de installatie is veranderd. De cijfers en het rapport zijn ongewijzigd.
+
+- `pak::pak("alex-janse/monitoranalyse")` werkte op Windows alleen met
+  Rtools, en dat hebben de meeste collega's niet. De handleiding, de README
+  en de melding in `04_run_project.R` gebruiken nu `install.packages()` met
+  de GitHub-link van een versie. Daar is geen Rtools voor nodig.
+- De installatielijst bevat nu ook `ggpattern`. Zonder dit package tekent het
+  rapport de staven bij kleine aantallen effen in plaats van gestreept. Met de
+  oude pak-opdracht werd `ggpattern` niet geïnstalleerd.
+- De herinstallatieopdracht in `engine/ENGINE_VERSIE.txt` en in de
+  versiewaarschuwing gebruikt dezelfde methode.
+
 # monitoranalyse 2.0.0
 
 Eerste versie als R-package. De zip-brontemplate (v1.x) wordt vervangen door
-een package dat je installeert met `pak::pak("alex-janse/monitoranalyse")`.
+een package dat je vanaf GitHub installeert (zie de README).
 
 ## Geen wijziging in de cijfers
 

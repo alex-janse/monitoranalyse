@@ -74,14 +74,17 @@ Nodig:
 
 - **R** (versie 4.1 of nieuwer) en **RStudio**. RStudio levert **Quarto** mee; dat is nodig om het rapport te maken.
 
-Plak in RStudio in de **Console** (het venster linksonder) deze twee regels en druk op Enter:
+Plak in RStudio in de **Console** (het venster linksonder) deze regels en druk op Enter:
 
 ```r
-install.packages("pak")
-pak::pak("alex-janse/monitoranalyse")
+install.packages(c("DT", "dplyr", "forcats", "ggpattern", "ggplot2", "haven",
+                   "htmltools", "jsonlite", "knitr", "purrr", "quarto", "readxl",
+                   "rlang", "rmarkdown", "stringr", "tibble", "tidyr"))
+install.packages("https://github.com/alex-janse/monitoranalyse/archive/refs/tags/v2.0.1.tar.gz",
+                 repos = NULL, type = "source")
 ```
 
-Dit installeert het package plus alles wat het nodig heeft. Dat kan de eerste keer een paar minuten duren.
+De eerste opdracht installeert de packages die de engine nodig heeft. Dat kan de eerste keer een paar minuten duren. De tweede installeert de engine zelf, rechtstreeks vanaf GitHub. Rtools is niet nodig.
 
 Controleren of het gelukt is:
 
@@ -89,7 +92,7 @@ Controleren of het gelukt is:
 packageVersion("monitoranalyse")
 ```
 
-> ⚙ Krijg je een vraag over het bijwerken van andere packages? Kies dan "All" of "Yes".
+> ⚙ Vraagt R "Do you want to install from sources the packages which need compilation?"? Typ dan `no` en druk op Enter.
 
 ---
 
@@ -123,19 +126,16 @@ Daarna volg je de [Snelstart](#snelstart--in-3-stappen) bovenaan deze handleidin
 
 ## Engine bijwerken of een specifieke versie gebruiken
 
-**Bijwerken naar de nieuwste versie:**
+**Bijwerken naar een nieuwe versie** of **een specifieke versie installeren** (bijvoorbeeld om een eerder rapport exact na te maken) gaat met dezelfde tweede opdracht als bij de installatie. Vervang alleen het versienummer achter `v`:
 
 ```r
-pak::pak("alex-janse/monitoranalyse")
+install.packages("https://github.com/alex-janse/monitoranalyse/archive/refs/tags/v2.0.1.tar.gz",
+                 repos = NULL, type = "source")
 ```
 
-Start RStudio daarna opnieuw.
+Welke versies er zijn, zie je op <https://github.com/alex-janse/monitoranalyse/tags>. Wat er per versie veranderd is, staat in `NEWS.md` in de repository. Start RStudio na het installeren opnieuw.
 
-**Een specifieke versie installeren** (bijvoorbeeld om een eerder rapport exact na te maken):
-
-```r
-pak::pak("alex-janse/monitoranalyse@v2.0.0")
-```
+Krijg je na het bijwerken een melding dat er een package ontbreekt? Draai dan ook de eerste opdracht uit [Installatie](#installatie-eenmalig) opnieuw.
 
 In `03_config.R` staat bij `engine_versie` met welke versie het project is gemaakt. Wijkt de geïnstalleerde versie daarvan af, dan krijg je bij het draaien een waarschuwing. De cijfers kunnen dan afwijken van eerdere runs. Elke run legt de gebruikte versie vast in het datapackage (`engine/ENGINE_VERSIE.txt` en `logs/run_log.txt`), inclusief de opdracht om exact die versie terug te zetten.
 

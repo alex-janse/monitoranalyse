@@ -207,12 +207,30 @@ engineversie en -commit), `session_info.txt` en `metadata_snapshot.xlsx`.
 
 - `engine_info()`: versie (`packageVersion`) en GitHub-commit
   (`packageDescription()$RemoteSha`, gezet door pak/remotes; anders `NA`).
+  Bij de aanbevolen installatie via de tarball-URL is de commit `NA`; de
+  versie (= tag) legt de engine dan vast.
 - `controleer_engine_versie()`: waarschuwing als `engine_versie` uit de
   config afwijkt.
 - `archiveer_engine()`: `engine/` in het datapackage. Een geïnstalleerd
   package bevat geen R-bronbestanden; daarom worden de functies gedeparsed
   (functioneel exact, zonder commentaar). Exacte herinstallatie via
-  `pak::pak("alex-janse/monitoranalyse@<commit of v-tag>")`.
+  `installatie_regel()`: `install.packages("<github>/archive/<commit of
+  refs/tags/v-tag>.tar.gz", repos = NULL, type = "source")`.
+
+### Installatie zonder Rtools
+
+`pak::pak("alex-janse/monitoranalyse")` faalt op Windows zonder Rtools
+(getest met pak 0.11.1). pak markeert een GitHub-package als
+`needscompilation = TRUE`, en ook met `NeedsCompilation: no` in
+`DESCRIPTION` eist het daarna Rtools. `install.packages()` met de
+tarball-URL van een tag werkt wel, maar installeert de afhankelijkheden niet.
+Die staan daarom als expliciete lijst in de README en in de handleiding:
+Imports zonder basispackages, plus `ggpattern`. `ggpattern` staat in
+Suggests, maar zonder dit package tekent het rapport kleine-N-staven effen in
+plaats van gestreept, dus het hoort erbij voor identieke output.
+`tests/testthat/test_installatie.R` bewaakt dat die lijst gelijk blijft aan
+`DESCRIPTION`. Een duurzamere optie is r-universe (Windows-binaries,
+afhankelijkheden automatisch).
 
 ---
 
@@ -347,7 +365,8 @@ NOT_CRAN=true R CMD check --no-manual monitoranalyse_<versie>.tar.gz
 Verwachte NOTE: "Namespaces in Imports field not imported from: DT, forcats,
 ggplot2, htmltools, jsonlite, knitr, rmarkdown, tidyr". Die packages
 gebruikt `rapport.qmd` (in een eigen R-proces), niet de R-code zelf. Ze staan
-bewust in Imports, zodat pak ze installeert.
+bewust in Imports: zo staan alle afhankelijkheden op één plek en installeren
+pak en remotes ze mee.
 
 ### Vergelijking met een referentieversie
 
@@ -368,8 +387,10 @@ major.minor.patch
 ```
 
 Release: versie in `DESCRIPTION`, sectie bovenaan `NEWS.md`, commit, tag
-`v<versie>`, push. Collega's installeren een specifieke versie met
-`pak::pak("alex-janse/monitoranalyse@v<versie>")`.
+`v<versie>`, push. Pas bij een nieuwe versie ook het versienummer in de
+installatie-URL aan in de README en in `inst/template/00_handleiding.md`;
+`test_installatie.R` controleert dat. Collega's installeren een specifieke
+versie met de tarball-URL van de tag (zie de README).
 
 ---
 

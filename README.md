@@ -19,10 +19,22 @@ SPSS (opschonen) → 01_data/ → validatie → analyseobject → HTML-rapport +
 Nodig: R (≥ 4.1) en RStudio. RStudio levert Quarto mee, en Quarto is nodig voor het
 rapport.
 
+Plak in de Console van RStudio:
+
 ```r
-install.packages("pak")
-pak::pak("alex-janse/monitoranalyse")
+install.packages(c("DT", "dplyr", "forcats", "ggpattern", "ggplot2", "haven",
+                   "htmltools", "jsonlite", "knitr", "purrr", "quarto", "readxl",
+                   "rlang", "rmarkdown", "stringr", "tibble", "tidyr"))
+install.packages("https://github.com/alex-janse/monitoranalyse/archive/refs/tags/v2.0.1.tar.gz",
+                 repos = NULL, type = "source")
 ```
+
+De eerste regel installeert de packages die de engine nodig heeft, de tweede
+de engine zelf. Rtools is niet nodig.
+
+> `pak::pak("alex-janse/monitoranalyse")` werkt op Windows alleen als
+> Rtools is geïnstalleerd. pak wil het package dan compileren, terwijl er
+> niets te compileren is. Gebruik daarom de opdrachten hierboven.
 
 ## Snelstart
 
@@ -51,13 +63,17 @@ Rscript 04_run_project.R
 
 ## Bijwerken en specifieke versies
 
+Een andere versie installeer je met de tweede opdracht hierboven. Vervang
+daarin alleen het versienummer achter `v` (alle versies:
+[tags](https://github.com/alex-janse/monitoranalyse/tags)):
+
 ```r
-pak::pak("alex-janse/monitoranalyse")          # nieuwste versie
-pak::pak("alex-janse/monitoranalyse@v2.0.0")   # exact versie 2.0.0
-packageVersion("monitoranalyse")               # welke versie heb ik?
+install.packages("https://github.com/alex-janse/monitoranalyse/archive/refs/tags/v2.0.0.tar.gz",
+                 repos = NULL, type = "source")    # exact versie 2.0.0
+packageVersion("monitoranalyse")                   # welke versie heb ik?
 ```
 
-Elke run legt de engineversie (en de GitHub-commit) vast in
+Elke run legt de engineversie (en, bij installatie via pak, de GitHub-commit) vast in
 `logs/run_log.txt`, in `$meta` van het analyseobject en in
 `engine/ENGINE_VERSIE.txt` in het datapackage. In `03_config.R` staat
 `engine_versie`: wijkt de geïnstalleerde versie daarvan af, dan geeft de run

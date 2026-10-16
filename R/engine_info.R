@@ -41,7 +41,7 @@ controleer_engine_versie <- function(gewenst) {
       ", maar ge\u00EFnstalleerd is versie ", huidig, ".\n",
       "De cijfers kunnen daardoor afwijken van eerdere runs van dit project.\n",
       "Wil je exact dezelfde versie gebruiken? Installeer die dan met:\n",
-      "  pak::pak(\"alex-janse/monitoranalyse@v", gewenst, "\")\n",
+      "  ", installatie_regel(paste0("refs/tags/v", gewenst)), "\n",
       "Gebruik je bewust de nieuwe versie? Pas dan engine_versie aan in ",
       "03_config.R.",
       call. = FALSE,
@@ -98,10 +98,9 @@ archiveer_engine <- function(archief_map) {
 
   # ---- Versiebestand -----------------------------------------------------
   installatie <- if (!is.na(info$commit)) {
-    paste0('pak::pak("', info$gebruiker %|na|% "alex-janse", "/",
-      info$bron %|na|% "monitoranalyse", "@", info$commit, '")')
+    installatie_regel(info$commit)
   } else {
-    paste0('pak::pak("alex-janse/monitoranalyse@v', info$versie, '")')
+    installatie_regel(paste0("refs/tags/v", info$versie))
   }
   writeLines(
     c(
@@ -117,6 +116,23 @@ archiveer_engine <- function(archief_map) {
     useBytes = FALSE
   )
   invisible(engine_map)
+}
+
+#' Installatieopdracht voor een versie of commit vanaf GitHub
+#'
+#' Installeert het broncodearchief van GitHub met `install.packages()`. Dat
+#' werkt zonder Rtools, want het package bevat geen gecompileerde code. pak
+#' en remotes vragen op Windows wel om Rtools. De afhankelijkheden moeten al
+#' geïnstalleerd zijn; zie 00_handleiding.md, sectie Installatie.
+#'
+#' @param ref `"refs/tags/v<versie>"` of een commit-SHA
+#' @return De opdracht als tekst
+#' @noRd
+installatie_regel <- function(ref) {
+  paste0(
+    'install.packages("https://github.com/alex-janse/monitoranalyse/archive/',
+    ref, '.tar.gz", repos = NULL, type = "source")'
+  )
 }
 
 # NA-variant van %||%: rechterkant als links NULL of NA is

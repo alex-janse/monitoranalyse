@@ -22,10 +22,9 @@
 if (!requireNamespace("monitoranalyse", quietly = TRUE)) {
   stop(
     "Het package 'monitoranalyse' is nog niet geïnstalleerd.\n",
-    "Installeer het eenmalig door dit in de Console te plakken:\n",
-    "  install.packages(\"pak\")\n",
-    "  pak::pak(\"alex-janse/monitoranalyse\")\n",
-    "Zie ook 00_handleiding.md, sectie 'Installatie'."
+    "Installeer het eenmalig met de twee opdrachten in 00_handleiding.md,\n",
+    "sectie 'Installatie (eenmalig)'. Die staan ook op\n",
+    "  https://github.com/alex-janse/monitoranalyse"
   )
 }
 
