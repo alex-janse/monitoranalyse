@@ -16,7 +16,9 @@ validate_input(data, meta, kleine_n_drempel = 10, resp_id_col = "ID")
 \item{resp_id_col}{Naam van de kolom met respondent-ID (uit config.R)}
 }
 \value{
-Tibble (audit_log) met alle validatieresultaten
+Tibble (audit_log) met alle validatieresultaten: kolommen
+\code{domein}, \code{controle}, \code{status}, \code{detail} en (sinds v2.0.0)
+\code{blokkerend} (TRUE als de analyse zonder oplossing niet kan doorgaan)
 }
 \description{
 Valideer het opgeschoonde .sav-bestand tegen de metadata

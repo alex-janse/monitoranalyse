@@ -182,6 +182,9 @@ analyse_dataset <- function(
   resp_id_col,
   kruis_vars = list()
 ) {
+  # ---- Respondent-ID aanwezig? (afweer, ook zonder validate_input) -------
+  controleer_resp_id_col(data, resp_id_col)
+
   # ---- Identificeer open clusters ----------------------------------------
   open_clusters <- meta |>
     filter(str_detect(cluster, "_open$")) |>

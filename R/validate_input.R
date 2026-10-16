@@ -9,6 +9,13 @@
 #   FOUT        — kritieke fout; rapport toont geen data-tabs
 #   WAARSCHUWING — mogelijk probleem; workflow gaat door, gebruiker moet beoordelen
 #   INFO        — informatief; geen actie vereist
+#
+# Blokkerend (kolom `blokkerend`, sinds v2.0.0):
+#   Een FOUT waar de analyse niet zonder kan (nu: ontbrekende
+#   respondent-ID-kolom). run_project() stopt dan direct na de validatie met
+#   een duidelijke melding. Overige FOUT-regels zijn niet blokkerend: de
+#   analyse kan doorgaan en het rapport toont de fouten op de Overzicht-pagina
+#   (en verbergt de resultaattabbladen).
 # =============================================================================
 
 
@@ -18,15 +25,106 @@
 #' @param controle  Omschrijving van de check
 #' @param status    "FOUT", "WAARSCHUWING" of "INFO"
 #' @param detail    Optionele toelichting (bijv. namen van ontbrekende variabelen)
+#' @param blokkerend TRUE als de analyse zonder oplossing niet kan doorgaan
 #' @return Tibble met één rij
 #' @noRd
-mk_log <- function(domein, controle, status, detail = NA_character_) {
+mk_log <- function(
+  domein,
+  controle,
+  status,
+  detail = NA_character_,
+  blokkerend = FALSE
+) {
   tibble(
     domein = domein,
     controle = controle,
     status = status,
-    detail = as.character(detail)
+    detail = as.character(detail),
+    blokkerend = blokkerend
   )
+}
+
+#' Zoek kolommen die waarschijnlijk de respondent-ID bevatten
+#'
+#' Vergelijkt zonder hoofdlettergevoeligheid en zonder leestekens/spaties
+#' (dus "resp_id", "RespID" en "respid" tellen allemaal als "respid").
+#'
+#' @param kolommen Karaktervector met kolomnamen uit de data
+#' @return Karaktervector met kandidaat-kolommen (beste eerst), mogelijk leeg
+#' @noRd
+zoek_id_kolommen <- function(kolommen) {
+  genormaliseerd <- str_to_lower(str_replace_all(kolommen, "[^A-Za-z0-9]", ""))
+  bekende_namen <- c(
+    "id", "respid", "respondentid", "respondent", "respondentnr",
+    "respondentnummer", "respnr", "orinr"
+  )
+  exact <- kolommen[genormaliseerd %in% bekende_namen]
+  # Ruimer: naam bevat respid/respondent/orinr, of eindigt op "_id"/" id"
+  ruim <- kolommen[
+    str_detect(genormaliseerd, "respid|respondent|orinr") |
+      str_detect(str_to_lower(kolommen), "(^|[_ .])id$")
+  ]
+  unique(c(exact, ruim))
+}
+
+#' Bouw de melding voor een ontbrekende respondent-ID-kolom
+#'
+#' @param resp_id_col Ingestelde kolomnaam (uit 03_config.R)
+#' @param kolommen    Kolomnamen in de data
+#' @return Tekst met uitleg en (indien gevonden) een suggestie
+#' @noRd
+melding_resp_id_col <- function(resp_id_col, kolommen) {
+  kandidaten <- zoek_id_kolommen(kolommen)
+  if (length(kandidaten) > 0) {
+    suggestie <- paste0(
+      "Bedoel je ",
+      paste0("resp_id_col <- \"", kandidaten, "\"", collapse = " of "),
+      "? "
+    )
+  } else {
+    max_tonen <- 100
+    getoond <- head(kolommen, max_tonen)
+    suggestie <- paste0(
+      "Er is geen kolom gevonden die op een respondent-ID lijkt. ",
+      "Kolommen in de data (", length(kolommen), "): ",
+      paste(getoond, collapse = ", "),
+      if (length(kolommen) > max_tonen) {
+        paste0(" ... en nog ", length(kolommen) - max_tonen, " kolom(men)")
+      },
+      ". "
+    )
+  }
+  paste0(
+    suggestie,
+    "Pas resp_id_col aan in 03_config.R. De waarde moet precies gelijk zijn ",
+    "aan de kolomnaam in het .sav-bestand, inclusief hoofdletters en kleine ",
+    "letters."
+  )
+}
+
+#' Stop met een duidelijke melding als resp_id_col niet in de data staat
+#'
+#' Afweer in de analysefuncties zelf, zodat er ook zonder (of na het
+#' negeren van) validate_input() geen cryptische fout ontstaat.
+#'
+#' @param data        Dataframe
+#' @param resp_id_col Ingestelde kolomnaam (uit 03_config.R)
+#' @noRd
+controleer_resp_id_col <- function(data, resp_id_col) {
+  if (
+    !is.character(resp_id_col) ||
+      length(resp_id_col) != 1 ||
+      !resp_id_col %in% names(data)
+  ) {
+    stop(
+      "\n[KRITIEKE FOUT] Respondent-ID kolom '",
+      paste(resp_id_col, collapse = ", "),
+      "' niet gevonden in de data.\n",
+      melding_resp_id_col(as.character(resp_id_col)[1], names(data)),
+      call. = FALSE
+    )
+  }
+  invisible(TRUE)
 }
 
 #' Valideer het opgeschoonde .sav-bestand tegen de metadata
@@ -35,7 +133,9 @@ mk_log <- function(domein, controle, status, detail = NA_character_) {
 #' @param meta  Metadata tibble ingeladen via read_metadata()
 #' @param kleine_n_drempel Minimale n_valid voor een waarschuwing (uit config.R)
 #' @param resp_id_col Naam van de kolom met respondent-ID (uit config.R)
-#' @return Tibble (audit_log) met alle validatieresultaten
+#' @return Tibble (audit_log) met alle validatieresultaten: kolommen
+#'   `domein`, `controle`, `status`, `detail` en (sinds v2.0.0)
+#'   `blokkerend` (TRUE als de analyse zonder oplossing niet kan doorgaan)
 #' @export
 validate_input <- function(
   data,
@@ -84,6 +184,8 @@ validate_input <- function(
 
   niet_in_meta <- setdiff(sav_vars, meta_vars)
   niet_in_meta <- niet_in_meta[!str_detect(niet_in_meta, sys_vars_patroon)]
+  # De ingestelde respondent-ID-kolom is ook een systeemkolom (bijv. "respid")
+  niet_in_meta <- setdiff(niet_in_meta, resp_id_col)
 
   if (length(niet_in_meta) == 0) {
     log[["vars_meta_dekking"]] <- mk_log(
@@ -132,7 +234,13 @@ validate_input <- function(
   }
 
   # ---- 4. Dubbele respondenten -------------------------------------------
-  id_col <- intersect(c("ID", "RespondentID", "orinr"), sav_vars)[1]
+  # Gebruik de ingestelde resp_id_col; alleen als die niet in de data staat
+  # terugvallen op de bekende standaardnamen.
+  id_col <- if (resp_id_col %in% sav_vars) {
+    resp_id_col
+  } else {
+    intersect(c("ID", "RespondentID", "orinr"), sav_vars)[1]
+  }
   if (!is.na(id_col)) {
     ids <- data[[id_col]]
     n_dubbel <- sum(duplicated(ids, incomparables = NA))
@@ -153,7 +261,11 @@ validate_input <- function(
   } else {
     log[["dubbele_ids"]] <- mk_log(
       "Respondenten",
-      "Geen ID-kolom gevonden (ID, RespondentID, orinr) \u2014 dubbele-check overgeslagen",
+      paste0(
+        "Geen ID-kolom gevonden (",
+        paste(unique(c(resp_id_col, "ID", "RespondentID", "orinr")), collapse = ", "),
+        ") \u2014 dubbele-check overgeslagen"
+      ),
       "WAARSCHUWING"
     )
   }
@@ -301,12 +413,10 @@ validate_input <- function(
       "Respondenten",
       paste0("Respondent-ID kolom '", resp_id_col, "' niet gevonden in data"),
       "FOUT",
-      paste0(
-        "Controleer resp_id_col in 03_config.R. ",
-        "Beschikbare kolommen: ",
-        paste(head(sav_vars, 10), collapse = ", "),
-        "..."
-      )
+      melding_resp_id_col(resp_id_col, sav_vars),
+      # Zonder respondent-ID kunnen open antwoorden en kruisingen niet
+      # worden gekoppeld: de analyse kan niet doorgaan.
+      blokkerend = TRUE
     )
   }
 
@@ -324,7 +434,15 @@ validate_input <- function(
     " waarschuwing(en)"
   )
 
-  if (n_fouten > 0) {
+  if (any(audit_log$blokkerend)) {
+    message(
+      "! ",
+      n_fouten,
+      " KRITIEKE FOUT(EN) gevonden, waarvan ",
+      sum(audit_log$blokkerend),
+      " blokkerend: de analyse kan zo niet doorgaan."
+    )
+  } else if (n_fouten > 0) {
     message(
       "! ",
       n_fouten,

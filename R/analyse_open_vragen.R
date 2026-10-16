@@ -22,6 +22,9 @@
 #' @return Named list met $open_antwoorden en $open_samenvatting
 #' @noRd
 analyse_open_vragen <- function(data, meta, resp_id_col) {
+  # Respondent-ID aanwezig? (afweer, ook zonder validate_input)
+  controleer_resp_id_col(data, resp_id_col)
+
   open_clusters <- meta |>
     filter(str_detect(cluster, "_open$")) |>
     pull(cluster) |>

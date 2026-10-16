@@ -39,7 +39,7 @@ read_metadata <- function(pad) {
       pad,
       "\n",
       "Controleer of het metadata-bestand in de juiste map staat en of het ",
-      "pad in run_project.R correct is ingesteld.",
+      "pad in 03_config.R correct is ingesteld.",
       call. = FALSE
     )
   }

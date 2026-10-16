@@ -90,6 +90,11 @@ run_project <- function(config = "03_config.R", open_rapport = interactive()) {
     resp_id_col = cfg$resp_id_col
   )
 
+  # ---- Stoppen bij blokkerende fouten ---------------------------------------
+  # Alleen fouten waar de analyse niet zonder kan (zie validate_input.R).
+  # Overige fouten verschijnen in het rapport (Overzicht > Validatielog).
+  stop_bij_blokkerende_fout(audit_log, file.path(archief_map, "logs"))
+
   # ---- Analyse --------------------------------------------------------------
   obj <- analyse_dataset(
     data,
@@ -257,6 +262,62 @@ controleer_invoerbestand <- function(pad, naam, omschrijving, config_pad) {
     )
   }
   invisible(TRUE)
+}
+
+#' Stop de pipeline als de validatie een blokkerende fout bevat
+#'
+#' Schrijft eerst audit_log.rds en run_log.txt weg (zodat er een spoor is)
+#' en stopt dan met een Nederlandse melding: welke controle faalde en wat de
+#' gebruiker moet doen.
+#'
+#' @param audit_log Audit_log van validate_input()
+#' @param logs_map  Map voor de logbestanden van deze run
+#' @noRd
+stop_bij_blokkerende_fout <- function(audit_log, logs_map) {
+  if (!"blokkerend" %in% names(audit_log)) {
+    return(invisible(TRUE))
+  }
+  blok <- audit_log[audit_log$status == "FOUT" & audit_log$blokkerend %in% TRUE, ]
+  if (nrow(blok) == 0) {
+    return(invisible(TRUE))
+  }
+
+  meldingen <- paste0(
+    "  \u2716 ", blok$domein, " \u2014 ", blok$controle, "\n",
+    "    ", blok$detail,
+    collapse = "\n\n"
+  )
+
+  saveRDS(audit_log, file.path(logs_map, "audit_log.rds"))
+  writeLines(
+    c(
+      "LKCA Monitor \u2014 Run-log",
+      "======================",
+      paste0("Aangemaakt op:    ", format(Sys.time(), "%d-%m-%Y %H:%M:%S")),
+      "",
+      "RUN GESTOPT na de inputvalidatie wegens blokkerende fout(en):",
+      "",
+      meldingen,
+      "",
+      "--- Validatiedetails ---",
+      capture.output(print(audit_log, n = Inf))
+    ),
+    file.path(logs_map, "run_log.txt")
+  )
+
+  stop(
+    "\n\n============================================================\n",
+    "  ANALYSE GESTOPT: kritieke fout in de invoer\n",
+    "============================================================\n\n",
+    meldingen, "\n\n",
+    "Wat moet je doen?\n",
+    "  1. Los bovenstaande fout op (meestal in 03_config.R).\n",
+    "  2. Sla 03_config.R op en draai 04_run_project.R opnieuw\n",
+    "     (Source of Ctrl+Shift+S).\n\n",
+    "Er is geen rapport gemaakt. De validatiedetails staan in\n  ",
+    file.path(logs_map, "run_log.txt"), "\n",
+    call. = FALSE
+  )
 }
 
 #' Controleer of Quarto beschikbaar is

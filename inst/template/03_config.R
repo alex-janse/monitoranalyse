@@ -28,7 +28,12 @@ metadata_file <- "01_data/"
 # ============================================================
 
 # Kolomnaam van het respondent-ID in je data
-# (wordt gebruikt in de Open antwoorden-tab van het rapport)
+# (wordt gebruikt in de Open antwoorden-tab en de kruisingen van het rapport)
+# LET OP: dit moet PRECIES gelijk zijn aan de kolomnaam in het .sav-bestand,
+# inclusief hoofdletters en kleine letters. Heet de kolom bijvoorbeeld
+# "respid", vul dan in: resp_id_col <- "respid"
+# Staat de kolom niet in de data, dan stopt de analyse met een melding en
+# een suggestie voor de juiste naam.
 resp_id_col <- "ID"
 
 # Achtergrondvariabelen voor kruisingen
