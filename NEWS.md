@@ -63,6 +63,7 @@ melding (`Can't select columns that don't exist`).
 - Het LKCA-logo zit niet meer in de engine. Je stelt het in met `logo_bestand` in
   `03_config.R`. Zonder logo bevat het rapport alleen de tekstregel.
 - `corrections.R` is vervallen: correcties horen in SPSS.
+- Licentie: EUPL-1.2.
 
 # monitoranalyse 1.3.0
 

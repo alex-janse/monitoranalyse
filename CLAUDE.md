@@ -76,12 +76,13 @@ bestand staat in `.gitignore` en mag nooit worden gecommit.
   tag `v<versie>` → push. Patch = bugfix zonder outputwijziging, minor = nieuwe
   functie, major = brekende of methodologische wijziging.
 - Push en tags alleen met expliciete toestemming van de eigenaar.
+- Licentie: EUPL-1.2 (sluit aan bij het open-sourcebeleid van de overheid).
+  De volledige tekst staat in `LICENSE.md`. Auteursrechthouder is Alex Janse
+  (`cph` in `DESCRIPTION`). Het LKCA-logo valt hier niet onder en blijft
+  buiten de repo.
 
 ## Open punten
 
-- Licentie: MIT pas toevoegen na bevestiging van de eigenaar (eigendom LKCA).
-  Tot die tijd staat er een tijdelijke tekst in `DESCRIPTION`, wat een
-  R CMD check-WARNING geeft.
 - Navragen bij de dashboardpartij of zij de onafgeronde `pct` uit
   `analyse_object.rds` gebruiken. Dan moeten zij ook halve-naar-even
   afronden (Excel `ROUND()` doet dat niet).

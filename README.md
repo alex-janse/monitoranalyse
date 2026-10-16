@@ -93,3 +93,9 @@ niet in de repository; zie `logo_bestand` in `03_config.R`.
 Versie 1.x (de zip-brontemplate) blijft bestaan als referentie voor projecten
 en rapporten die daarmee zijn gemaakt. Versie 2.0.0 geeft voor dezelfde invoer
 identieke cijfers en een identiek rapport.
+
+## Licentie
+
+© Alex Janse. Uitgebracht onder de
+[European Union Public Licence v1.2 (EUPL-1.2)](LICENSE.md). Het LKCA-logo
+valt niet onder deze licentie en zit niet in de repository.

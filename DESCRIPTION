@@ -3,7 +3,7 @@ Type: Package
 Title: Analyse en Rapportage van LKCA-Monitordata
 Version: 2.0.0
 Authors@R:
-    person("Alex", "Janse", role = c("aut", "cre"),
+    person("Alex", "Janse", role = c("aut", "cre", "cph"),
            email = "242792222+alex-janse@users.noreply.github.com")
 Description: Leest een opgeschoond SPSS-bestand (.sav) en een metadata-bestand
     (.xlsx, .xls of .csv) in, valideert beide, bouwt een centraal
@@ -11,7 +11,7 @@ Description: Leest een opgeschoond SPSS-bestand (.sav) en een metadata-bestand
     kruistabellen, open antwoorden) en maakt daaruit een zelfstandig
     HTML-rapport met Quarto, plus een datapackage per run voor
     reproduceerbaarheid.
-License: Nog te bepalen (wordt MIT na bevestiging eigenaar LKCA)
+License: EUPL-1.2
 URL: https://github.com/alex-janse/monitoranalyse
 BugReports: https://github.com/alex-janse/monitoranalyse/issues
 Depends:
